@@ -35,10 +35,11 @@ def animate(hist, names, path=Path(__file__).with_name("simulation.mp4"),
     (mid_line,) = ax_price.plot([], [], color="tab:blue", lw=0.7, label="mid")
     ax_price.set(ylabel="price ($)", title="Price")
     ax_price.legend(loc="upper left")
-    inv_lines = [ax_inv.plot([], [], lw=1.6 if nm == "MM" else 0.9, label=nm)[0] for nm in names]
-    ax_inv.set(xlabel="step", ylabel="shares", title="Inventory",
-               ylim=(0, np.nanmax(hist["shares"]) * 1.3))
-    ax_inv.legend(fontsize=8, ncol=4, loc="upper left")
+    inv_lines = [ax_inv.plot([], [], lw=1.6 if nm.startswith("MM") else 0.9, label=nm)[0] for nm in names]
+    shares = hist["shares"] / hist["shares"][0] * 100  # percent of initial group holdings
+    ax_inv.set(xlabel="step", ylabel="% of initial shares", title="Inventory by group",
+               ylim=(0, np.nanmax(shares) * 1.3))
+    ax_inv.legend(fontsize=7, ncol=5, loc="upper left")
 
     # Book bars live on a fixed grid of tick offsets from mid; only widths change.
     offsets = np.arange(-half_depth, half_depth + 1)
@@ -62,13 +63,13 @@ def animate(hist, names, path=Path(__file__).with_name("simulation.mp4"),
         lo_p, hi_p = np.nanmin(prices), np.nanmax(prices)
         ax_price.set(xlim=(lo, max(lo + window, t)), ylim=(lo_p - 0.02, hi_p + 0.02))
         for line, j in zip(inv_lines, range(len(names))):
-            line.set_data(x[sl], hist["shares"][sl, j])
+            line.set_data(x[sl], shares[sl, j])
         ax_inv.set_xlim(lo, max(lo + window, t))
 
         bids, asks = hist["books"][t]
         center = hist["mid"][t]
         if np.isnan(center):
-            center = hist["last"][t] if not np.isnan(hist["last"][t]) else 10_000
+            center = hist["last"][t] if not np.isnan(hist["last"][t]) else hist["mid"][0]
         center = int(round(center))
         for bars, levels in ((bid_bars, bids), (ask_bars, asks)):
             volume = dict((p - center, v) for p, v, _ in levels)
@@ -95,5 +96,5 @@ if __name__ == "__main__":
     parser.add_argument("--stride", type=int, default=10, help="simulation steps per video frame")
     parser.add_argument("--fps", type=int, default=30)
     args = parser.parse_args()
-    _, hist, names, _ = simulate(steps=args.steps)
+    _, hist, names = simulate(steps=args.steps, record_books=True)
     animate(hist, names, stride=args.stride, fps=args.fps)

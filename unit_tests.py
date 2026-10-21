@@ -32,6 +32,16 @@ class TestOrderBook(unittest.TestCase):
                     orders.append(order)
         self.assertEqual(len(orders), len(book._orders))
         self.assertEqual({o["order_id"] for o in orders}, set(book._orders))
+        for side in ("bid", "ask"):
+            table = book.bid_table if side == "bid" else book.ask_table
+            self.assertEqual(sorted(table), book._prices[side])
+            for price, queue in table.items():
+                self.assertEqual(book.get_volume_at_price(side, price), sum(o["quantity"] for o in queue))
+        by_client = {}
+        for o in orders:
+            by_client.setdefault(o["client_id"], set()).add(o["order_id"])
+        for cid, ids in by_client.items():
+            self.assertEqual({o["order_id"] for o in book.get_client_orders(cid)}, ids)
         if book.best_bid is not None and book.best_ask is not None:
             self.assertLess(book.best_bid, book.best_ask)
             self.assertEqual(book.mid_price, (book.best_bid + book.best_ask) / 2)
@@ -88,19 +98,24 @@ class TestOrderBook(unittest.TestCase):
                 )
                 self.assert_invariants(book)
 
-    def test_depletion_tracks_next_quote_without_fabricating_opposite_quote(self):
+    def test_empty_side_window_follows_opposite_best_without_fabricating_quote(self):
         first = self.book.place_ask(1, 10010, 2)
         self.book.place_ask(2, 10015, 4)
-        original_bid_anchor = self.book.bid_prices.copy()
+        np.testing.assert_array_equal(self.book.bid_prices, [10009, 9990])
         self.book.buy(3, 2)
         self.assertIsNone(self.book.get_order(first))
         self.assertEqual(self.book.ask_prices[0], 10015)
-        np.testing.assert_array_equal(self.book.bid_prices, original_bid_anchor)
+        np.testing.assert_array_equal(self.book.bid_prices, [10014, 9995])
         self.assertIsNone(self.book.mid_price)
+        with self.assertRaises(ValueError):
+            self.book.place_bid(3, 9994, 1)
         remaining = self.book.get_client_orders(2)[0]["order_id"]
         self.book.cancel_order(remaining, 2)
         self.assertIsNone(self.book.best_ask)
-        self.assertEqual(self.book.ask_prices[0], 10015)
+        # Both sides empty: both windows anchor on the last trade price.
+        self.assertEqual(self.book.ask_prices[0], 10010)
+        self.assertEqual(self.book.bid_prices[0], 10010)
+        self.assertEqual(OrderBook(20, 10000, 5).ask_prices[0], 10005)  # no trade yet
 
     def test_default_stp_market_cancels_incoming_not_resting(self):
         order_id = self.book.place_ask(1, 10005, 5)
@@ -177,7 +192,7 @@ class TestOrderBook(unittest.TestCase):
                         expected,
                     )
                     self.assertEqual(
-                        report["stp_cancelled_order_ids"],
+                        [o["order_id"] for o in report["stp_cancelled_orders"]],
                         [own] if mode in {"cancel_oldest", "cancel_both"} else [],
                     )
                     self.assertEqual(book.get_order(own) is not None, mode == "cancel_newest")
@@ -245,7 +260,7 @@ class TestOrderBook(unittest.TestCase):
     def test_snapshots_arrays_depth_and_mutation_isolation(self):
         bid = self.book.place_bid(1, 9995, 5)
         self.book.place_bid(2, 9993, 7)
-        self.book.place_ask(3, 10005, 4)
+        ask = self.book.place_ask(3, 10005, 4)
         snapshot = self.book.get_snapshot(1)
         self.assertEqual(snapshot["bids"], [(9995, 5, 1)])
         self.assertEqual(snapshot["total_bid_volume"], 12)
@@ -262,13 +277,14 @@ class TestOrderBook(unittest.TestCase):
         self.book.bid_table[9995][0]["quantity"] = 0
         self.book.get_order(bid)["quantity"] = 0
         self.assertEqual(self.book.get_order(bid)["quantity"], 5)
+        # Reports and trade records are shared, read-only objects (no deep copies).
         result = self.book.buy(4, 2)
-        result["trades"][0]["price"] = 0
-        self.book.last_order_report["trades"].clear()
-        self.book.trades[0]["quantity"] = 0
-        self.assertEqual(self.book.trades[0]["price"], 10005)
-        self.assertEqual(self.book.last_order_report["filled_quantity"], 2)
-        self.assertEqual(len(self.book.last_order_report["trades"]), 1)
+        self.assertIs(result, self.book.last_order_report)
+        self.assertEqual(result["trades"][0]["price"], 10005)
+        self.assertEqual(result["trades"][0]["sell_order_id"], ask)
+        self.book.trades.clear()
+        self.assertEqual(len(self.book.trades), 1)
+        self.assertEqual(len(OrderBook(20, 10000, 5, keep_trades=False).trades), 0)
 
     def test_low_prices_and_aggregate_volume_overflow(self):
         book = OrderBook(5, 3, 1)
@@ -308,3 +324,87 @@ class TestOrderBook(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMarketAndSimulator(unittest.TestCase):
+    """Reservation bookkeeping must match the book exactly under every removal path."""
+
+    def assert_reservations_consistent(self, market):
+        reserved = {cid: [0, 0] for cid in market.accounts}
+        for side, table in (("bid", market.book.bid_table), ("ask", market.book.ask_table)):
+            for queue in table.values():
+                for o in queue:
+                    reserved[o["client_id"]][side == "ask"] += o["price"] * o["quantity"] if side == "bid" else o["quantity"]
+        for cid, account in market.accounts.items():
+            self.assertEqual((account.reserved_cash, account.reserved_shares), tuple(reserved[cid]), cid)
+            self.assertGreaterEqual(account.free_cash, 0)
+            self.assertGreaterEqual(account.free_shares, 0)
+
+    def test_settlement_reservations_and_removal_paths(self):
+        from agents import Market
+        book = OrderBook(5, 100, 1, self_trade_prevention="cancel_oldest")
+        market = Market(book)
+        for cid in range(3):
+            market.open_account(cid, 10_000, 50)
+        self.assertIsNotNone(market.limit(0, "bid", 99, 10))  # reserves 990
+        self.assertEqual(market.accounts[0].reserved_cash, 990)
+        self.assertIsNotNone(market.limit(1, "ask", 101, 5))  # reserves 5 shares
+        market.market(2, "ask", 4)  # hits client 0's bid: maker cash reservation released pro rata
+        self.assertEqual(market.accounts[0].reserved_cash, 99 * 6)
+        self.assertEqual((market.accounts[0].shares, market.accounts[2].cash), (54, 10_000 + 4 * 99))
+        market.limit(0, "bid", 95, 2)
+        market.limit(0, "bid", 100, 1)  # improving the best evicts the 95 bid (window of 5)
+        self.assertEqual(book.get_volume_at_price("bid", 95), 0)
+        market.market(0, "ask", 3)  # own bid at best: cancel_oldest removes it and releases cash
+        self.assert_reservations_consistent(market)
+        market.cancel_all(0)
+        market.cancel_all(1)
+        self.assertEqual((market.accounts[0].reserved_cash, market.accounts[1].reserved_shares), (0, 0))
+        self.assertIsNone(market.limit(2, "ask", 200, 1))  # outside the window: dropped, counted
+        self.assertEqual(market.window_rejects["ask"], 1)
+        market.limit(1, "ask", 101, 50)
+        self.assertEqual(market.accounts[1].reserved_shares, 50)
+        self.assertIsNone(market.limit(1, "ask", 102, 1))  # nothing free left
+        self.assertEqual(market.budget_rejects["ask"], 1)
+        market.accounts[2].cash = 250
+        report = market.market(2, "bid", 10)  # can afford only 2 at 101
+        self.assertEqual(report["filled_quantity"], 2)
+        self.assert_reservations_consistent(market)
+
+    def test_simulator_conserves_wealth_is_seeded_and_picklable(self):
+        import pickle
+        from simulation.simulator import Simulator
+        a, b = Simulator(seed=3, analysis=False), Simulator(seed=3, analysis=False)
+        a.run(300)
+        b.run(300)
+        self.assertEqual(a.market.public.mid, b.market.public.mid)
+        self.assertEqual(a.book.trade_id, b.book.trade_id)
+        a.check_conservation()
+        self.assert_reservations_consistent(a.market)
+        self.assertIsNone(a.market.tape)
+        clone = pickle.loads(pickle.dumps(a))
+        clone.run(200)
+        a.run(200)
+        self.assertEqual(clone.market.public.mid, a.market.public.mid)
+        clone.reseed(7)
+        a.reseed(8)
+        clone.run(200)
+        a.run(200)
+        self.assertNotEqual(clone.book.order_id, a.book.order_id)
+        clone.check_conservation()
+
+    def test_env_is_seeded_bounded_and_picklable(self):
+        import pickle
+        from simulation.env import OrderBookEnv, burn_in
+        states = burn_in([0, 1], steps=200)
+        env = OrderBookEnv(states, decision_interval=5, horizon=3)
+        obs, _ = env.reset(seed=4)
+        self.assertEqual(obs.shape, env.observation_space.shape)
+        results = [env.step(a) for a in (1, 3, 4)]
+        trajectory = [r[1] for r in results]
+        self.assertEqual([r[3] for r in results], [False, False, True])  # truncated at the horizon
+        clone = pickle.loads(pickle.dumps(OrderBookEnv(states, decision_interval=5, horizon=3)))
+        clone.reset(seed=4)
+        self.assertEqual([clone.step(a)[1] for a in (1, 3, 4)], trajectory)
+        env.sim.check_conservation()
+        self.assert_reservations_consistent(env.sim.market)

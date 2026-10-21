@@ -2,3 +2,6 @@
 __pycache__
 *.png
 *.mp4
+*.npz
+*.pkl
+.DS_Store

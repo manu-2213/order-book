@@ -1,107 +1,101 @@
-"""Run the random-agent market simulation and plot the results.
+"""One analysis run of the background market with plots.
 
-Run from the repo root: python -m simulation.run
+Run from the repo root: python -m simulation.run [--steps 10000] [--seed 0]
 """
 
+import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-from agents import Market, MarketMaker, RandomAgent
-from order_book import OrderBook
+from simulation.simulator import Simulator
 
 
-def simulate(steps=10_000, n_random=6, seed=0, mid=10_000, num_levels=20,
-             record_books=True):
-    rng = np.random.default_rng(seed)
-    book = OrderBook(num_levels=num_levels, mid_price=mid, distance_from_mid=1)
-    market = Market(book)
-    mm = MarketMaker(0, market, np.random.default_rng(rng.integers(1 << 32)), 2_000_000, 200)
-    traders = [RandomAgent(i, market, np.random.default_rng(rng.integers(1 << 32)),
-                           int(rng.integers(200_000, 1_000_000)), int(rng.integers(20, 100)),
-                           activity=float(rng.uniform(0.3, 0.8)))
-               for i in range(1, n_random + 1)]
-    agents = [mm, *traders]
-    totals = (sum(a.cash for a in market.accounts.values()),
-              sum(a.shares for a in market.accounts.values()))
+def simulate(steps=10_000, seed=0, num_levels=20, record_books=False):
+    """Run and record per-step public state and per-group holdings.
 
-    keys = ("last", "mid", "bid", "ask", "spread", "volume", "depth_bid", "depth_ask")
-    hist = {k: [] for k in keys}
-    hist["cash"], hist["shares"], hist["wealth"] = [], [], []
-    books = []  # per-step L2 levels [(price, volume, n_orders), ...] for animation
-    n_trades = 0
-    for step in range(steps):
-        market.step = step
-        for i in rng.permutation(len(agents)):
-            agents[i].act()
-        trades = book._trades[n_trades:]
-        n_trades = len(book._trades)
-        snap = book.get_snapshot()
+    Returns (sim, hist, names). ``hist["books"]`` holds (bids, asks) level
+    tuples per step when ``record_books`` (used by the animation).
+    """
+    sim = Simulator(seed, num_levels)
+    names = list(sim.groups)
+    groups = [[sim.market.accounts[c] for c in cids] for cids in sim.groups.values()]
+    keys = ("last", "mid", "bid", "ask", "spread", "volume", "value", "attention", "flow_signal")
+    hist = {k: np.full(steps, np.nan) for k in keys}
+    hist["shares"] = np.zeros((steps, len(names)))
+    hist["wealth"] = np.zeros((steps, len(names)))
+    hist["books"] = []
+    ps = sim.market.public
+    for t in range(steps):
+        sim.step()
+        hist["last"][t] = np.nan if ps.last is None else ps.last
+        hist["mid"][t] = ps.mid
+        hist["bid"][t] = np.nan if ps.best_bid is None else ps.best_bid
+        hist["ask"][t] = np.nan if ps.best_ask is None else ps.best_ask
+        hist["spread"][t] = ps.spread if ps.best_bid is not None and ps.best_ask is not None else np.nan
+        hist["volume"][t], hist["value"][t] = ps.step_volume, sim.fundamental.value
+        hist["attention"][t], hist["flow_signal"][t] = ps.attention, ps.flow_signal
+        for j, accounts in enumerate(groups):
+            hist["shares"][t, j] = sum(a.shares for a in accounts)
+            hist["wealth"][t, j] = sum(a.cash + a.shares * ps.mid for a in accounts)
         if record_books:
-            books.append((snap["bids"], snap["asks"]))
-        mark = market.last_price or mid
-        nan = lambda x: np.nan if x is None else x  # noqa: E731
-        for k, v in zip(keys, (market.last_price, snap["mid_price"], snap["best_bid"], snap["best_ask"],
-                               snap["spread"], sum(t["quantity"] for t in trades),
-                               snap["total_bid_volume"], snap["total_ask_volume"])):
-            hist[k].append(nan(v))
-        hist["cash"].append([market.accounts[a.cid].cash for a in agents])
-        hist["shares"].append([market.accounts[a.cid].shares for a in agents])
-        hist["wealth"].append([market.accounts[a.cid].cash + market.accounts[a.cid].shares * mark
-                               for a in agents])
-        assert (sum(a.cash for a in market.accounts.values()),
-                sum(a.shares for a in market.accounts.values())) == totals
-        assert all(a.cash >= 0 and a.shares >= 0 for a in market.accounts.values())
-
-    hist = {k: np.asarray(v, dtype=float) for k, v in hist.items()}
-    hist["books"] = books
-    names = ["MM"] + [f"R{a.cid}" for a in traders]
-    flows = np.zeros((len(agents), len(agents)))
-    for t in book._trades:
-        flows[t["buyer_id"], t["seller_id"]] += t["quantity"]
-    return book, hist, names, flows
+            snap = sim.book.get_snapshot()
+            hist["books"].append((snap["bids"], snap["asks"]))
+    sim.check_conservation()
+    return sim, hist, names
 
 
-def plot(book, hist, names, flows, path=Path(__file__).with_name("simulation.png"), tick=0.01):
+def flow_matrix(sim, names):
+    """Traded lots between groups: rows buy from columns."""
+    index = {cid: j for j, cids in enumerate(sim.groups.values()) for cid in cids}
+    flows = np.zeros((len(names), len(names)))
+    for _, _, quantity, _, buyer, seller in sim.market.tape:
+        flows[index[buyer], index[seller]] += quantity
+    return flows
+
+
+def plot(sim, hist, names, path=Path(__file__).with_name("simulation.png"), tick=0.01):
     fig, ax = plt.subplots(3, 2, figsize=(14, 12))
-    x = np.arange(len(hist["last"]))
+    x = np.arange(len(hist["mid"]))
     a = ax[0, 0]
     a.fill_between(x, hist["bid"] * tick, hist["ask"] * tick, alpha=0.25, label="best bid/ask")
-    a.plot(x, hist["mid"] * tick, lw=0.8, label="mid")
     a.plot(x, hist["last"] * tick, lw=0.8, label="last trade")
+    a.plot(x, hist["value"] * tick, lw=0.8, color="black", alpha=0.6, label="hidden value")
     a.set(title="Price", xlabel="step", ylabel="price ($)")
     a.legend()
 
     a = ax[0, 1]
     a.bar(x, hist["volume"], width=1.0, color="grey", label="volume / step")
-    a.set(title="Traded volume and spread", xlabel="step", ylabel="lots")
+    a.set(title="Traded volume, spread and attention", xlabel="step", ylabel="lots")
     b = a.twinx()
     b.plot(x, hist["spread"], color="tab:red", lw=0.7, label="spread (ticks)")
-    b.set_ylabel("spread (ticks)")
+    b.plot(x, hist["attention"], color="tab:blue", lw=0.7, label="attention")
+    b.legend(loc="upper right")
 
-    for a, key, title in ((ax[1, 0], "wealth", "Mark-to-market wealth (vs start)"),
-                          (ax[1, 1], "shares", "Inventory (shares)")):
-        data = hist[key] - hist[key][0] if key == "wealth" else hist[key]
+    per_head = np.array([len(c) for c in sim.groups.values()])
+    for a, key, title in ((ax[1, 0], "wealth", "Mark-to-market wealth per head vs start ($)"),
+                          (ax[1, 1], "shares", "Shares per head")):
+        data = hist[key] / per_head
         if key == "wealth":
-            data = data * tick
+            data = (data - data[0]) * tick
         for j, name in enumerate(names):
-            a.plot(x, data[:, j], lw=1.6 if name == "MM" else 0.9, label=name)
+            a.plot(x, data[:, j], lw=1.5 if name.startswith("MM") else 0.9, label=name)
         a.set(title=title, xlabel="step")
-        a.legend(fontsize=8, ncol=2)
+        a.legend(fontsize=7, ncol=4)
 
     a = ax[2, 0]
-    im = a.imshow(flows, cmap="viridis")
+    im = a.imshow(flow_matrix(sim, names), cmap="viridis")
     a.set(title="Traded lots: buyer (row) <- seller (col)",
           xticks=range(len(names)), yticks=range(len(names)), xticklabels=names, yticklabels=names)
+    a.tick_params(axis="x", labelrotation=45)
     fig.colorbar(im, ax=a)
 
     a = ax[2, 1]
-    snap = book.get_snapshot()
-    for side, color in (("bids", "tab:green"), ("asks", "tab:red")):
-        levels = snap[side]
+    for side, color in (("bid", "tab:green"), ("ask", "tab:red")):
+        levels = sim.book.levels(side)
         if levels:
-            p, v, _ = zip(*levels)
+            p, v = zip(*levels)
             a.barh(np.array(p) * tick, v, height=tick * 0.9, color=color, label=side)
     a.set(title="Final book depth", xlabel="resting lots", ylabel="price ($)")
     a.legend()
@@ -111,8 +105,13 @@ def plot(book, hist, names, flows, path=Path(__file__).with_name("simulation.png
 
 
 if __name__ == "__main__":
-    book, hist, names, flows = simulate()
-    plot(book, hist, names, flows)
-    last = hist["last"][~np.isnan(hist["last"])]
-    print(f"trades={len(book._trades)}  price ${last[0] / 100:.2f} -> ${last[-1] / 100:.2f}  "
-          f"mean spread={np.nanmean(hist['spread']):.1f} ticks  saved simulation/simulation.png")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--steps", type=int, default=10_000)
+    parser.add_argument("--seed", type=int, default=0)
+    args = parser.parse_args()
+    sim, hist, names = simulate(args.steps, args.seed)
+    plot(sim, hist, names)
+    r = np.diff(hist["mid"])
+    print(f"trades={sim.book.trade_id - 1}  price ${hist['mid'][0] / 100:.2f} -> ${hist['mid'][-1] / 100:.2f}  "
+          f"mean spread={np.nanmean(hist['spread']):.2f} ticks  mid-change std={r.std():.2f} ticks  "
+          f"saved simulation/simulation.png")
