@@ -1,167 +1,309 @@
+import random
 import unittest
+
 import numpy as np
+
 from order_book import OrderBook
 
 
 class TestOrderBook(unittest.TestCase):
     def setUp(self):
-        self.ob = OrderBook(num_levels=20, mid_price=10000, distance_from_mid=5)
+        self.book = OrderBook(20, 10000, 5)
 
-    def test_initial_state(self):
-        np.testing.assert_array_equal(self.ob.bid_prices, np.array([9995, 9975]))
-        np.testing.assert_array_equal(self.ob.ask_prices, np.array([10005, 10025]))
-        self.assertEqual(self.ob.mid_price, 10000)
-        self.assertIsNone(self.ob.best_bid)
-        self.assertIsNone(self.ob.best_ask)
-        self.assertIsNone(self.ob.spread)
-
-    def test_resting_limit_orders_and_out_of_bounds(self):
-        oid1 = self.ob.place_ask(client_id=1, ask=10022, quantity=100)
-        self.assertEqual(oid1, 100_000)
-        self.assertEqual(self.ob.ask_table[10022][0]["order_id"], 100_000)
-        self.assertEqual(self.ob.ask_table[10022][0]["quantity"], 100)
-
-        oid2 = self.ob.place_bid(client_id=2, bid=9990, quantity=50)
-        self.assertEqual(oid2, 100_001)
-        self.assertEqual(self.ob.bid_table[9990][0]["quantity"], 50)
-
-        # Out-of-range bid (< 9975) and ask (>= 10025)
-        with self.assertRaises(ValueError):
-            self.ob.place_bid(client_id=2, bid=9970, quantity=10)
-        with self.assertRaises(ValueError):
-            self.ob.place_ask(client_id=1, ask=10025, quantity=10)
-
-    def test_window_shift_and_eviction_on_aggressive_non_crossing_orders(self):
-        # Place deep bid at 9976 (within [9995, 9975])
-        deep_bid_id = self.ob.place_bid(client_id=1, bid=9976, quantity=25)
-        self.assertIsNotNone(self.ob.get_order(deep_bid_id))
-
-        # Place tighter bid at 9998 -> shifts bid_prices to [9998, 9978], evicting 9976
-        tight_bid_id = self.ob.place_bid(client_id=2, bid=9998, quantity=40)
-        np.testing.assert_array_equal(self.ob.bid_prices, np.array([9998, 9978]))
-        self.assertNotIn(9976, self.ob.bid_table)
-        self.assertIsNone(self.ob.get_order(deep_bid_id))
-        self.assertIsNotNone(self.ob.get_order(tight_bid_id))
-        self.assertEqual(self.ob.mid_price, (10005 + 9998) / 2)
-
-        # Same on ask side: place deep ask at 10024, then tighter ask at 10002
-        deep_ask_id = self.ob.place_ask(client_id=3, ask=10024, quantity=30)
-        tight_ask_id = self.ob.place_ask(client_id=4, ask=10002, quantity=60)
-        np.testing.assert_array_equal(self.ob.ask_prices, np.array([10002, 10022]))
-        self.assertNotIn(10024, self.ob.ask_table)
-        self.assertIsNone(self.ob.get_order(deep_ask_id))
-        self.assertIsNotNone(self.ob.get_order(tight_ask_id))
-        self.assertEqual(self.ob.mid_price, (10002 + 9998) / 2)
-
-    def test_price_time_priority_and_market_orders(self):
-        # Two asks at 10005 (FIFO order) and one ask at 10008
-        a1 = self.ob.place_ask(client_id=10, ask=10005, quantity=30)
-        a2 = self.ob.place_ask(client_id=11, ask=10005, quantity=50)
-        a3 = self.ob.place_ask(client_id=12, ask=10008, quantity=40)
-
-        # Market buy for 60: should fill all 30 of a1 and 30 of a2 at 10005
-        report = self.ob.buy(client_id=20, quantity=60)
-        self.assertEqual(report["filled_quantity"], 60)
-        self.assertEqual(report["cancelled_quantity"], 0)
-        self.assertEqual(report["avg_fill_price"], 10005.0)
-        self.assertEqual(len(report["trades"]), 2)
-        self.assertEqual(report["trades"][0]["sell_order_id"], a1)
-        self.assertEqual(report["trades"][0]["quantity"], 30)
-        self.assertEqual(report["trades"][1]["sell_order_id"], a2)
-        self.assertEqual(report["trades"][1]["quantity"], 30)
-
-        # a2 should have 20 left at 10005
-        self.assertIsNone(self.ob.get_order(a1))
-        self.assertEqual(self.ob.get_order(a2)["quantity"], 20)
-
-        # Market buy for 100 (exceeds remaining 20 + 40 = 60 liquidity -> partial fill + IOC cancel)
-        report2 = self.ob.buy(client_id=21, quantity=100)
-        self.assertEqual(report2["filled_quantity"], 60)
-        self.assertEqual(report2["cancelled_quantity"], 40)
-        self.assertIsNone(self.ob.best_ask)
-        self.assertIsNone(self.ob.get_order(a3))
-
-    def test_crossing_limit_order_matches_and_rests_remainder(self):
-        self.ob.place_ask(client_id=1, ask=10005, quantity=40)
-        self.ob.place_ask(client_id=2, ask=10007, quantity=30)
-        self.ob.place_ask(client_id=3, ask=10010, quantity=50)
-
-        # Crossing limit bid at 10008 for quantity 90:
-        # Matches 40 @ 10005 and 30 @ 10007 (total 70), then rests 20 @ 10008!
-        bid_oid = self.ob.place_bid(client_id=9, bid=10008, quantity=90)
-        report = self.ob.last_order_report
-        self.assertEqual(report["order_id"], bid_oid)
-        self.assertEqual(report["filled_quantity"], 70)
-        self.assertEqual(report["resting_quantity"], 20)
-        self.assertEqual(self.ob.best_bid, 10008)
-        self.assertEqual(self.ob.best_ask, 10010)
-        self.assertEqual(self.ob.get_volume_at_price("bid", 10008), 20)
-
-    def test_cancel_and_modify_order(self):
-        b1 = self.ob.place_bid(client_id=1, bid=9995, quantity=50)
-        b2 = self.ob.place_bid(client_id=2, bid=9995, quantity=40)
-
-        # Decreasing quantity keeps queue priority (b1 stays ahead of b2)
-        mod_id = self.ob.modify_order(order_id=b1, new_quantity=30, client_id=1)
-        self.assertEqual(mod_id, b1)
-        self.assertEqual(self.ob.bid_table[9995][0]["order_id"], b1)
-        self.assertEqual(self.ob.bid_table[9995][0]["quantity"], 30)
-
-        # Increasing quantity loses time priority (moves behind b2)
-        new_b1 = self.ob.modify_order(order_id=b1, new_quantity=80, client_id=1)
-        self.assertNotEqual(new_b1, b1)
-        self.assertEqual(self.ob.bid_table[9995][0]["order_id"], b2)
-        self.assertEqual(self.ob.bid_table[9995][1]["order_id"], new_b1)
-
-        # Ownership check on cancel
-        with self.assertRaises(PermissionError):
-            self.ob.cancel_order(order_id=b2, client_id=999)
-
-        cancelled = self.ob.cancel_order(order_id=b2, client_id=2)
-        self.assertEqual(cancelled["cancelled_quantity"], 40)
-        self.assertIsNone(self.ob.get_order(b2))
-
-    def test_self_trade_prevention(self):
-        # Default STP is "cancel_newest"
-        a1 = self.ob.place_ask(client_id=42, ask=10005, quantity=50)
-        report = self.ob.buy(client_id=42, quantity=30)
-        self.assertEqual(report["filled_quantity"], 0)
-        self.assertEqual(report["cancelled_quantity"], 30)
-        self.assertEqual(self.ob.get_order(a1)["quantity"], 50)
-
-        # "cancel_oldest" cancels resting order and continues matching
-        ob_oldest = OrderBook(
-            num_levels=20,
-            mid_price=10000,
-            distance_from_mid=5,
-            self_trade_prevention="cancel_oldest",
+    def assert_accounted(self, report):
+        self.assertEqual(
+            report["requested_quantity"],
+            report["filled_quantity"] + report["resting_quantity"] + report["cancelled_quantity"],
         )
-        old_id = ob_oldest.place_ask(client_id=42, ask=10005, quantity=50)
-        other_id = ob_oldest.place_ask(client_id=99, ask=10006, quantity=50)
-        rep2 = ob_oldest.buy(client_id=42, quantity=30)
-        self.assertIn(old_id, rep2["stp_cancelled_order_ids"])
-        self.assertIsNone(ob_oldest.get_order(old_id))
-        self.assertEqual(rep2["filled_quantity"], 30)
-        self.assertEqual(rep2["trades"][0]["sell_order_id"], other_id)
 
-    def test_snapshot_and_book_arrays(self):
-        self.ob.place_bid(client_id=1, bid=9995, quantity=25)
-        self.ob.place_bid(client_id=2, bid=9993, quantity=15)
-        self.ob.place_ask(client_id=3, ask=10005, quantity=40)
+    def assert_invariants(self, book):
+        orders = []
+        for side, table in (("bid", book.bid_table), ("ask", book.ask_table)):
+            window = book.bid_prices if side == "bid" else book.ask_prices
+            for price, queue in table.items():
+                self.assertTrue(queue)
+                self.assertLessEqual(min(window), price)
+                self.assertLessEqual(price, max(window))
+                ids = [o["order_id"] for o in queue]
+                self.assertEqual(ids, sorted(ids))
+                for order in queue:
+                    self.assertGreater(order["quantity"], 0)
+                    self.assertEqual(book.get_order(order["order_id"]), order)
+                    orders.append(order)
+        self.assertEqual(len(orders), len(book._orders))
+        self.assertEqual({o["order_id"] for o in orders}, set(book._orders))
+        if book.best_bid is not None and book.best_ask is not None:
+            self.assertLess(book.best_bid, book.best_ask)
+            self.assertEqual(book.mid_price, (book.best_bid + book.best_ask) / 2)
+        else:
+            self.assertIsNone(book.mid_price)
+            self.assertIsNone(book.spread)
+        self.assert_accounted(book.last_order_report)
 
-        snap = self.ob.get_snapshot()
-        self.assertEqual(snap["best_bid"], 9995)
-        self.assertEqual(snap["best_ask"], 10005)
-        self.assertEqual(snap["spread"], 10)
-        self.assertEqual(snap["total_bid_volume"], 40)
-        self.assertEqual(snap["total_ask_volume"], 40)
+    def test_empty_and_one_sided_state(self):
+        self.assertIsNone(self.book.mid_price)
+        self.assertIsNone(self.book.best_bid)
+        self.assertIsNone(self.book.best_ask)
+        np.testing.assert_array_equal(self.book.bid_prices, [9995, 9976])
+        np.testing.assert_array_equal(self.book.ask_prices, [10005, 10024])
+        bid = self.book.place_bid(1, 9990, 5)
+        self.assertEqual(self.book.bid_prices[0], 9990)
+        self.assertIsNone(self.book.mid_price)
+        self.book.place_ask(2, 10010, 4)
+        self.assertEqual(self.book.ask_prices[0], 10010)
+        self.assertEqual(self.book.mid_price, 10000)
+        self.book.cancel_order(bid, 1)
+        self.assertIsNone(self.book.mid_price)
+        self.assertIsNone(self.book.spread)
 
-        arrays = self.ob.get_book_arrays()
-        self.assertEqual(len(arrays["bid_volumes"]), 20)
-        self.assertEqual(len(arrays["ask_volumes"]), 20)
-        self.assertEqual(arrays["bid_volumes"][0], 25)
-        self.assertEqual(arrays["bid_volumes"][2], 15)
-        self.assertEqual(arrays["ask_volumes"][0], 40)
+    def test_exact_window_boundaries_and_reported_evictions(self):
+        for side in ("bid", "ask"):
+            with self.subTest(side=side):
+                book = OrderBook(20, 10000, 5)
+                place = book.place_bid if side == "bid" else book.place_ask
+                edge, outside, improved = ((9976, 9975, 9998) if side == "bid"
+                                          else (10024, 10025, 10002))
+                with self.assertRaises(ValueError):
+                    place(1, outside, 1)
+                old = place(1, edge, 7)
+                place(2, improved, 3)
+                self.assertIsNone(book.get_order(old))
+                self.assertEqual(book.last_order_report["evicted_orders"][0]["order_id"], old)
+                self.assertEqual(book.last_order_report["evicted_orders"][0]["quantity"], 7)
+                self.assert_invariants(book)
+
+    def test_all_admitted_window_ticks_appear_in_arrays(self):
+        for side in ("bid", "ask"):
+            with self.subTest(side=side):
+                book = OrderBook(20, 10000, 5)
+                place = book.place_bid if side == "bid" else book.place_ask
+                anchor = 9995 if side == "bid" else 10005
+                step = -1 if side == "bid" else 1
+                for i in range(20):
+                    place(i, anchor + i * step, i + 1)
+                arrays = book.get_book_arrays()
+                self.assertEqual(arrays[f"{side}_volumes"].tolist(), list(range(1, 21)))
+                self.assertEqual(
+                    arrays[f"{side}_prices"].tolist(), [anchor + i * step for i in range(20)],
+                )
+                self.assert_invariants(book)
+
+    def test_depletion_tracks_next_quote_without_fabricating_opposite_quote(self):
+        first = self.book.place_ask(1, 10010, 2)
+        self.book.place_ask(2, 10015, 4)
+        original_bid_anchor = self.book.bid_prices.copy()
+        self.book.buy(3, 2)
+        self.assertIsNone(self.book.get_order(first))
+        self.assertEqual(self.book.ask_prices[0], 10015)
+        np.testing.assert_array_equal(self.book.bid_prices, original_bid_anchor)
+        self.assertIsNone(self.book.mid_price)
+        remaining = self.book.get_client_orders(2)[0]["order_id"]
+        self.book.cancel_order(remaining, 2)
+        self.assertIsNone(self.book.best_ask)
+        self.assertEqual(self.book.ask_prices[0], 10015)
+
+    def test_default_stp_market_cancels_incoming_not_resting(self):
+        order_id = self.book.place_ask(1, 10005, 5)
+        report = self.book.buy(1, 3)
+        self.assertEqual(report["filled_quantity"], 0)
+        self.assertEqual(report["cancelled_quantity"], 3)
+        self.assertEqual(self.book.get_order(order_id)["quantity"], 5)
+        self.assert_invariants(self.book)
+
+    def test_price_priority_fifo_partial_and_market_ioc_both_sides(self):
+        for buying in (True, False):
+            with self.subTest(buying=buying):
+                book = OrderBook(20, 10000, 5)
+                place = book.place_ask if buying else book.place_bid
+                market = book.buy if buying else book.sell
+                best, worse = (10005, 10008) if buying else (9995, 9992)
+                deep = place(1, worse, 4)
+                first = place(2, best, 3)
+                second = place(3, best, 5)
+                report = market(9, 6)
+                key = "sell_order_id" if buying else "buy_order_id"
+                self.assertEqual([t[key] for t in report["trades"]], [first, second])
+                self.assertEqual([t["quantity"] for t in report["trades"]], [3, 3])
+                self.assertEqual(report["avg_fill_price"], best)
+                self.assertIsNone(book.get_order(first))
+                self.assertEqual(book.get_order(second)["quantity"], 2)
+                report = market(9, 10)
+                self.assertEqual([t[key] for t in report["trades"]], [second, deep])
+                self.assertEqual(report["filled_quantity"], 6)
+                self.assertEqual(report["cancelled_quantity"], 4)
+                self.assertAlmostEqual(report["avg_fill_price"], (2 * best + 4 * worse) / 6)
+                self.assertEqual(report["trades"][0]["buyer_id"], 9 if buying else 3)
+                self.assertEqual(report["trades"][0]["seller_id"], 3 if buying else 9)
+                self.assertEqual(market(9, 2)["cancelled_quantity"], 2)
+                self.assert_invariants(book)
+
+    def test_crossing_limits_keep_price_protection_and_rest_both_sides(self):
+        for buying in (True, False):
+            with self.subTest(buying=buying):
+                book = OrderBook(20, 10000, 5)
+                maker = book.place_ask if buying else book.place_bid
+                taker = book.place_bid if buying else book.place_ask
+                prices = (10005, 10007, 10010) if buying else (9995, 9993, 9990)
+                for client, price in enumerate(prices):
+                    maker(client, price, 10)
+                limit = 10008 if buying else 9992
+                order_id = taker(9, limit, 25)
+                report = book.last_order_report
+                self.assertEqual([t["price"] for t in report["trades"]], list(prices[:2]))
+                self.assertEqual(report["filled_quantity"], 20)
+                self.assertEqual(book.get_order(order_id)["quantity"], 5)
+                self.assertEqual(book.get_order(order_id)["price"], limit)
+                self.assert_invariants(book)
+
+    def test_all_stp_modes_after_external_partial_fill_both_sides(self):
+        for buying in (True, False):
+            for mode in sorted(OrderBook.VALID_STP_MODES):
+                with self.subTest(buying=buying, mode=mode):
+                    book = OrderBook(20, 10000, 5, mode)
+                    maker = book.place_ask if buying else book.place_bid
+                    taker = book.place_bid if buying else book.place_ask
+                    price = 10005 if buying else 9995
+                    maker(2, price, 2)
+                    own = maker(1, price, 3)
+                    maker(3, price, 4)
+                    taker(1, price, 8)
+                    report = book.last_order_report
+                    expected = {
+                        "none": (8, 0, 0), "cancel_newest": (2, 0, 6),
+                        "cancel_oldest": (6, 2, 0), "cancel_both": (2, 0, 6),
+                    }[mode]
+                    self.assertEqual(
+                        tuple(report[k] for k in ("filled_quantity", "resting_quantity", "cancelled_quantity")),
+                        expected,
+                    )
+                    self.assertEqual(
+                        report["stp_cancelled_order_ids"],
+                        [own] if mode in {"cancel_oldest", "cancel_both"} else [],
+                    )
+                    self.assertEqual(book.get_order(own) is not None, mode == "cancel_newest")
+                    if mode != "none":
+                        self.assertTrue(all(t["buyer_id"] != t["seller_id"] for t in book.trades))
+                    self.assert_invariants(book)
+
+    def test_cancel_modify_priority_and_crossing(self):
+        first = self.book.place_bid(1, 9995, 10)
+        second = self.book.place_bid(2, 9995, 4)
+        self.assertEqual(self.book.modify_order(first, 5, client_id=1), first)
+        self.assertEqual(self.book.last_order_report["cancelled_quantity"], 5)
+        increased = self.book.modify_order(first, 8, client_id=1)
+        self.assertEqual([o["order_id"] for o in self.book.bid_table[9995]], [second, increased])
+        self.assertEqual(self.book.last_order_report["replaced_order_id"], first)
+        self.book.place_ask(3, 10005, 3)
+        crossed = self.book.modify_order(increased, new_price=10005, client_id=1)
+        self.assertEqual(self.book.last_order_report["filled_quantity"], 3)
+        self.assertEqual(self.book.get_order(crossed)["quantity"], 5)
+        self.assertIsNone(self.book.modify_order(crossed, 0, client_id=1))
+        self.assertIsNone(self.book.get_order(crossed))
+        self.assert_invariants(self.book)
+
+    def test_rejected_modifications_are_atomic(self):
+        for side in ("bid", "ask"):
+            book = OrderBook(20, 10000, 5)
+            place = book.place_bid if side == "bid" else book.place_ask
+            order_id = place(1, 9995 if side == "bid" else 10005, 10)
+            before, next_id = book.get_order(order_id), book.order_id
+            changes = [
+                {"new_quantity": -1}, {"new_quantity": 1.9}, {"new_quantity": True},
+                {"new_price": 9990.5}, {"new_price": 0},
+                {"new_price": 9975 if side == "bid" else 10025},
+            ]
+            for change in changes:
+                with self.subTest(side=side, change=change):
+                    with self.assertRaises(ValueError):
+                        book.modify_order(order_id, client_id=1, **change)
+                    self.assertEqual(book.get_order(order_id), before)
+                    self.assertEqual(book.order_id, next_id)
+            for operation in (book.cancel_order, book.modify_order):
+                with self.assertRaises(PermissionError):
+                    operation(order_id, client_id=2)
+                with self.assertRaises(KeyError):
+                    operation(0, client_id=1)
+
+    def test_invalid_inputs_and_numpy_integers(self):
+        for value in (0, -1, True, 1.5, "2", 2**63):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    OrderBook(value, 10000, 5)
+                with self.assertRaises(ValueError):
+                    self.book.buy(1, value)
+                with self.assertRaises(ValueError):
+                    self.book.place_bid(1, value, 1)
+        with self.assertRaises(ValueError):
+            OrderBook(20, 5, 5)
+        with self.assertRaises(ValueError):
+            self.book.place_bid(1, None, 1)
+        with self.assertRaises(ValueError):
+            self.book.buy(1, 1, "invalid")
+        order_id = self.book.place_bid(np.int64(1), np.int64(9995), np.int64(3))
+        self.assertEqual(self.book.get_order(order_id)["quantity"], 3)
+
+    def test_snapshots_arrays_depth_and_mutation_isolation(self):
+        bid = self.book.place_bid(1, 9995, 5)
+        self.book.place_bid(2, 9993, 7)
+        self.book.place_ask(3, 10005, 4)
+        snapshot = self.book.get_snapshot(1)
+        self.assertEqual(snapshot["bids"], [(9995, 5, 1)])
+        self.assertEqual(snapshot["total_bid_volume"], 12)
+        self.assertEqual(self.book.get_snapshot(0)["bids"], [])
+        arrays = self.book.get_book_arrays()
+        self.assertEqual(arrays["bid_prices"].shape, (20,))
+        self.assertEqual(arrays["bid_prices"].dtype, np.int64)
+        self.assertEqual(arrays["bid_volumes"][:3].tolist(), [5, 0, 7])
+        self.assertEqual(self.book.get_book_arrays(0)["ask_prices"].size, 0)
+        for invalid in (-1, 2.5, True):
+            for query in (self.book.get_snapshot, self.book.get_book_arrays):
+                with self.assertRaises(ValueError):
+                    query(invalid)
+        self.book.bid_table[9995][0]["quantity"] = 0
+        self.book.get_order(bid)["quantity"] = 0
+        self.assertEqual(self.book.get_order(bid)["quantity"], 5)
+        result = self.book.buy(4, 2)
+        result["trades"][0]["price"] = 0
+        self.book.last_order_report["trades"].clear()
+        self.book.trades[0]["quantity"] = 0
+        self.assertEqual(self.book.trades[0]["price"], 10005)
+        self.assertEqual(self.book.last_order_report["filled_quantity"], 2)
+        self.assertEqual(len(self.book.last_order_report["trades"]), 1)
+
+    def test_low_prices_and_aggregate_volume_overflow(self):
+        book = OrderBook(5, 3, 1)
+        book.place_bid(1, 1, 1)
+        arrays = book.get_book_arrays()
+        self.assertEqual(arrays["bid_prices"].tolist(), [1, 0, 0, 0, 0])
+        self.assertEqual(arrays["bid_valid"].tolist(), [True, False, False, False, False])
+        book.place_ask(2, 4, 2**63 - 1)
+        book.place_ask(3, 4, 1)
+        with self.assertRaises(OverflowError):
+            book.get_book_arrays()
+        self.assertEqual(book.get_snapshot()["total_ask_volume"], 2**63)
+
+    def test_deterministic_random_sequences_preserve_invariants(self):
+        rng = random.Random(42)
+        for _ in range(600):
+            action, client, quantity = rng.randrange(6), rng.randrange(5), rng.randrange(1, 20)
+            if action < 2:
+                side = "bid" if action == 0 else "ask"
+                anchor = int((self.book.bid_prices if side == "bid" else self.book.ask_prices)[0])
+                price = anchor + rng.randrange(0, 5) * (1 if side == "bid" else -1)
+                place = self.book.place_bid if side == "bid" else self.book.place_ask
+                place(client, price, quantity)
+            elif action < 4:
+                market = self.book.buy if action == 2 else self.book.sell
+                market(client, quantity)
+            elif self.book._orders:
+                order = rng.choice(list(self.book._orders.values()))
+                if action == 4:
+                    self.book.cancel_order(order.order_id, order.client_id)
+                else:
+                    self.book.modify_order(order.order_id, quantity, client_id=order.client_id)
+            else:
+                continue
+            self.assert_invariants(self.book)
 
 
 if __name__ == "__main__":
