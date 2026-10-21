@@ -95,3 +95,54 @@ Run the tests using the project's Python environment:
 ```sh
 python -m unittest unit_tests -v
 ```
+
+## Agent simulation
+
+- `agents/` — `Market` (accounting wrapper), `Agent`, `RandomAgent`, `MarketMaker`.
+- `simulation/run.py` — `simulate()` loop and `plot()`.
+- `simulation/animate.py` — renders `simulation/simulation.mp4`: trailing price and
+  inventory charts plus the live order book (±25 ticks around mid), one frame per
+  `--stride` steps (default 10 → 1000 frames, ~100 s to render). Uses the ffmpeg
+  binary bundled with `imageio-ffmpeg`: `.venv/bin/python -m simulation.animate`.
+
+`.venv/bin/python -m simulation.run` (from the repo root) runs 10,000 steps on a book with
+`num_levels=20`, one `MarketMaker` (client 0) and six `RandomAgent`s (clients 1–6), then
+writes `simulation/simulation.png` (price, spread/volume,
+per-agent wealth and inventory, buyer→seller trade matrix, final depth).
+
+- `Market` wraps the book: it routes all orders and settles cash/shares for **both**
+  sides of every trade. All accounting is kept outside the book.
+- No shorting or borrowing: resting bids reserve cash and resting asks reserve shares.
+  Market buys are capped by walking the visible asks. Total cash and shares are
+  asserted to be conserved every step.
+- `RandomAgent`: zero-intelligence trader. It acts with probability `activity`; 15% of
+  its orders are market orders and the rest are limit orders placed between −2 and +15
+  ticks from the reference price (mid, else last trade); negative offsets cross the spread.
+  Orders are cancelled after `ttl` steps.
+- `MarketMaker`: each step it cancels its quotes and requotes both sides around the
+  reference with a random half-spread and size, skewed against its inventory.
+- Agent order is shuffled every step. Everything is seeded (`simulate(seed=...)`).
+
+### Comparing 100 independent price paths
+
+From the repository root:
+
+```sh
+.venv/bin/python -m simulation.batch
+```
+
+Runs 100 independent simulations of 10,000 timesteps with 20 levels per side,
+using up to four worker processes. Each run has its own book, six random traders,
+one market maker, and a different seed (including different initial trader
+endowments and activity). This samples 100 outcomes, not all possible outcomes.
+No book snapshots are retained in batch mode.
+
+The output is `simulation/price_paths.png`: all last-trade paths overlaid,
+with a median and empirical 5th-95th percentile band. This band describes these
+sampled simulations, not a forecast confidence interval. Before the first trade,
+price is missing rather than replaced with an artificial trade.
+`simulation/price_paths.npz` stores `prices` with shape `(runs, steps)`, `seeds`,
+`num_levels` and `tick_size` for further analysis.
+
+Options: `--runs 100 --steps 10000 --levels 20 --seed 0 --workers 4`.
+Use `--workers 1` for sequential execution.

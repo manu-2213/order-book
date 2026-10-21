@@ -1,3 +1,5 @@
 numpy
+matplotlib
 gymnasium
-ipykernelmatplotlib
+ipykernel
+imageio-ffmpeg
