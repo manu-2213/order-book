@@ -65,70 +65,152 @@ read-only objects, not copies; `keep_trades=False` disables the trade log.
 
 An L2 array (`get_book_arrays`) is a partial observation: FIFO order, owners,
 order ids and anchors also drive transitions. Balances, inventory, rewards and
-scheduling live outside the book (see `agents/market.py`).
+scheduling live outside the book (see `order_book/market.py`).
 
-Tests: `python -m unittest unit_tests -v`
+Tests: `python -m pytest`
 
-## Background market (`agents/`, `simulation/`)
+## Documentation
 
-`agents/market.py`
-- `Market` owns all accounts and routes orders. Resting bids reserve cash and
-  resting asks reserve shares as running totals updated on place, fill (both
-  sides), cancel, STP and eviction, so `free_cash`/`free_shares` are O(1), nobody
-  shorts or borrows, and cash/shares are conserved. `market()` walks the ask
-  levels so a buy is always funded. Analysis mode keeps a tape of
-  `(step, price, qty, aggressor, buyer, seller)`; training mode keeps nothing.
-- `PublicState` is updated once per step: mid, spread, best quotes, fast/slow
-  EWMAs of mid, squared mid change (volatility) and volume, momentum
-  (fast EMA - slow EMA) for three lookback pairs, rolling signed aggressive flow
-  (ring buffer, no tape scan) with an EWMA imbalance -> `flow_signal` in [-1, 1],
-  and an `attention` multiplier in [0.5, 3] from relative volatility and volume.
+`docs/simulator.tex` (compiled: `docs/simulator.pdf`) documents every rule, equation, default
+parameter, the randomness model, the validation methodology and the measured results. It is written
+so that sections can be lifted into the paper. Build it with `cd docs && latexmk -pdf simulator.tex`.
+The summary below is a map; the document is the reference.
 
-`agents/agents.py` -- cost per event, not per notional trader
-- `NoiseFlow`: Poisson(rate x attention) orders per step from one pooled account;
-  sides, sizes and geometric offsets drawn vectorised; 15% market (half size),
-  5% marketable, the rest passive; Binomial random cancellations; bid probability
-  tilted toward the pool's cash share so it never runs dry.
-- `Speculators`: one array-backed population (40). Each member is a
-  fundamentalist (noisy private view of a hidden random-walk value; passive
-  limits for small gaps, size-bounded market orders for large ones) or a
-  chartist (one of the three public momentum indicators; market entries, chunked
-  exits). One vectorised draw picks who acts (5%/step); every 50 steps modes
-  switch Brock-Hommes style on EWMA fitness of realised returns.
-- `Institution` (x2): rare large metaorders executed as evenly sized TWAP child
-  market orders; returns immediately while idle.
-- `MarketMaker` (x4, two with flow detection): Avellaneda-Stoikov reservation
-  price and spread from `PublicState` volatility, skew and half-spread capped at
-  10 ticks, post-only, requotes only on a >= 1 tick move or when size runs down
-  (keeps queue priority), pulls a side at +/-200 inventory. Detection skews and
-  widens against persistent one-sided flow.
+## Layout
 
-Default endowments (shares; cash = shares x mid so cash and stock start equal):
-makers 300, noise pool 2000, institutions 1000, speculators 200. Edit
-`POPULATION`/`ENDOWMENT` in `simulation/simulator.py`.
-
-Commands (from the repo root):
-
-```sh
-python -m simulation.benchmark            # steps/s + cProfile top 20
-python -m simulation.run                  # 10k-step analysis run -> simulation/simulation.png
-python -m simulation.animate              # video with the live book -> simulation/simulation.mp4
-python -m simulation.batch                # 100 seeds x 10k steps in parallel -> price_paths.png/.npz
-python -m simulation.env --seeds 8        # burn in and save the RL start-state pool
+```
+order_book/              the library (pip install -e .)
+  book.py                OrderBook: matching engine, knows nothing about agents
+  market.py              Account, Market: accounting and order routing
+  public_state.py        PublicState: the per-step public view everyone may read
+  config.py              frozen dataclasses for every parameter (SimConfig)
+  detectors/             Detector interface; FlowDetector (rule-based, level A1)
+  agents/                NoiseFlow, Speculators, InstitutionalTrader (+ MetaorderLog labels),
+                         MarketMaker, OrderAnticipator, FundamentalValue
+  simulator.py           Simulator: one seeded run; per-agent RNG streams; snapshot/restore;
+                         external agents for paired counterfactuals
+  presets.py             adversary levels A0 / A1 (lenient, medium, strict) / A4; private valuations
+  history.py             per-step recording of an analysis run
+  validation.py          stylised facts, impact statistics, pass/fail table (plan section 4.2)
+  impact.py              paired square-root-impact measurement with injected metaorders
+  execution/             ExecutionTask, ExecutorAgent, Strategy; 12 baselines; Calibration + fitting
+  detectors/             + features.py, statistical.py (A2: runs, cusum, volume_clock, regularity),
+                         learned.py (A3: logistic classifier on public features)
+  scoring.py             ROC AUC, detection delay, false alarms; bootstrap CI, paired diff, CVaR, Holm
+  experiments.py         AdversarySpec, EpisodeSpec, E2Config, E3Config, runner and summaries
+  env.py                 OrderBookEnv: Gymnasium prototype (to be replaced by the execution MDP)
+scripts/                 CLI entry points, run as python -m scripts.<name>; write to outputs/
+tests/                   pytest suite (python -m pytest)
+docs/                    LaTeX documentation
 ```
 
-Performance (one core, 20-agent population, 20k steps): 950 steps/s before
-this rewrite -> ~17,000 steps/s in training mode, ~16,000 with the full tape.
-Remaining cost is roughly 40% market makers, 30% noise flow, 25% book.
+Dependency direction is strictly downward: `book` <- `market`/`public_state`
+<- `detectors` <- `agents` <- `simulator` <- `presets`/`history`/`validation`/`impact`/`execution`/`env`
+<- `experiments` <- `scripts`. The book never imports anything above it; agents never touch the book except
+through `Market`; detectors read only `PublicState`.
 
-## RL environment (`simulation/env.py`)
+## Configuration
 
-`OrderBookEnv` is a Gymnasium env: the agent acts every `decision_interval`
-steps (6 discrete actions: hold, market buy/sell, join best bid/ask, cancel
-all), reward is the mark-to-market wealth change in ticks, episodes start from a
-saved pool of burned-in simulator states (`burn_in(seeds, steps)`, several
-seeds) reseeded per episode. The env is picklable and seeded through
-`reset(seed=...)`, so `gymnasium.vector.AsyncVectorEnv` works. The observation
-is `PublicState` features, own position/resting size/free cash and the top
-`depth` volumes per side. If this is ever too slow, the next step is a numba
-array book; it has not been needed.
+A run is fully determined by a `SimConfig` and a seed. Every agent parameter,
+detector threshold, population count and endowment is a field of a frozen
+dataclass in `order_book/config.py`; experiments differ only by config:
+
+```python
+from dataclasses import replace
+from order_book import SimConfig, Simulator
+from order_book.config import PopulationConfig, market_makers
+from order_book.presets import adversary
+
+cfg = replace(SimConfig(), population=replace(PopulationConfig(), institutions=8,
+                                              market_makers=market_makers(n=6, detecting=3)))
+sim = Simulator(seed=0, config=cfg, analysis=True)
+sim.run(10_000)
+sim.check_conservation()
+labels = sim.metaorders.records        # ground-truth metaorders (analysis mode only)
+a4 = Simulator(seed=0, config=adversary("A4", "strict"))
+```
+
+## The market in one paragraph each
+
+- **Randomness.** One root `SeedSequence(seed)` spawns an independent child stream for the scheduler,
+  the hidden value and every agent in fixed order. `(config, seed)` reproduces the event log exactly;
+  `reseed()` re-derives every stream in place; `new_stream()` / `add_external()` give an executor or an
+  injected metaorder its own stream outside the scheduler's permutation, so a run with and without it
+  shares the background randomness (common random numbers) and their difference is the order's impact.
+- **Market / PublicState.** Accounting with exact reservations and conservation; a per-step public view
+  (mid, spread, fast/slow EWMAs of mid, variance and volume, three momentum indicators, rolling signed
+  flow imbalance, attention). No interpretation lives here.
+- **Detectors.** `update(public_state)` once per step; `signal` in [-1, 1] and `p_buy`/`p_sell`.
+  `FlowDetector` is the rule-based level A1 (EWMA of the flow imbalance, thresholded).
+- **NoiseFlow.** Poisson(rate x attention) zero-intelligence orders from one pooled account.
+- **Speculators.** 40 fundamentalists / chartists with Brock-Hommes switching; shared hidden value or
+  private adaptive valuations (`FundamentalConfig.private`).
+- **InstitutionalTrader** (x4). Poisson metaorder starts, log-normal sizes (median 600 lots, cap
+  3,000), participation 2-20% of market volume, five execution styles (TWAP market, TWAP passive with
+  catch-up, randomised TWAP, POV, front-loaded Almgren-Chriss-like), inventory-reverting side choice,
+  forced completion at the planned end, ground-truth labels in analysis mode.
+- **MarketMaker** (x4, two reading the flow detector). Avellaneda-Stoikov quotes, post-only, queue
+  keeping; fixed detection response (skew, widen, size cut) per unit signal; fragility (size falls
+  with fast/slow volatility ratio, quotes pulled above a ratio of 3 for a cooldown).
+- **OrderAnticipator** (A4 only). Trades with the detected flow within a position limit, unwinds when
+  the signal fades; optional contrarian-first mode (van Kervel-Menkveld).
+
+## Validation (plan section 4.2)
+
+`python -m scripts.validate --seeds 5 --steps 30000` with the default configuration passes every
+target: median spread 1 tick, no empty sides, |return autocorrelation| < 0.05 from lag 5
+(max 0.044), kurtosis 12.7 -> 6.9 from 1 to 100 steps, positive decaying autocorrelation of absolute
+returns and of trade signs, square-root impact exponent 0.69 at completion / 0.64 at peak on the paired
+measurement (0.60 / 0.54 on 181 natural metaorders), partial impact reversion, zero budget rejects,
+~15,000 steps/s. See the document for how the measurements are defined, what the validation found
+and fixed (institutional inventory drift, measurement power), and the parameter sweep behind the
+defaults. The private-valuation preset runs but still needs its own calibration.
+
+Commands (from the repo root; outputs go to `outputs/`):
+
+```sh
+pip install -e .                          # or: uv pip install -e .
+python -m pytest                          # 115 tests, ~5 s
+python -m scripts.validate                # stylised facts + paired impact, 5 seeds x 10k steps
+python -m scripts.validate --seeds 10 --steps 50000 --preset private
+python -m scripts.impact --seeds 20       # paired square-root impact, saves paths
+python -m scripts.benchmark               # steps/s + cProfile top 20
+python -m scripts.run                     # 10k-step analysis run -> outputs/simulation.png
+python -m scripts.animate                 # video with the live book -> outputs/simulation.mp4
+python -m scripts.batch                   # 100 seeds x 10k steps in parallel -> outputs/price_paths.*
+python -m scripts.burn_in --seeds 8       # RL start-state pool -> outputs/states.pkl
+```
+
+## Phase 2: measurement without RL (plan sections 5.1, 6, 7, 9, 10)
+
+- **Execution task** (`execution/task.py`): side, Q = fraction x expected volume x T (T = 2000, N = 5),
+  hard limits (2 resting orders, 5 ticks through the best, optional participation cap), forced
+  completion at T counted in full. `ExecutorAgent` is an external agent with its own RNG stream.
+- **Baselines** (`execution/strategies.py`): immediate, twap_market, twap_passive, twap_random, pov,
+  almgren_chriss_{1e-7,1e-6,1e-5}, obizhaeva_wang, limit_market, footprint, mimic. Model-based ones read
+  a `Calibration` (sigma, temporary/permanent impact, resilience, depth, fill probabilities) fitted under
+  A0 by `scripts/calibrate.py`.
+- **Adversaries**: A0, A1 (lenient/medium/strict flow detector), A4 (A1 + anticipator) as markets; A1
+  thresholds, A2 (runs, CUSUM, volume clock, regularity) and A3 (learned, `scripts/train_detector.py`)
+  as observers scored on ground truth.
+- **E2** (`scripts/e2_detectability.py`): ROC AUC / delay / false alarms of every detector on every
+  classic strategy and size in the A1-medium market.
+- **E3** (`scripts/e3_leakage.py`): every baseline x size x {A0, A1-medium, A4} x {visible, invisible}
+  on the same seeds (+ no-executor runs); leakage = IS(visible) - IS(invisible) paired by seed with
+  bootstrap CI, p-value and Holm correction; prints the Phase 2 gate verdict.
+
+```sh
+python -m scripts.calibrate                        # ~3 min; writes outputs/calibration.json
+python -m scripts.train_detector                   # verbose per epoch; writes outputs/detectors/learned.npz
+python -m scripts.e2_detectability --workers 8     # 420 episodes -> outputs/e2/
+python -m scripts.e3_leakage --workers 8 --paths   # 4,380 episodes -> outputs/e3/ (gate verdict at the end)
+python -m scripts.<any of the four> --quick        # smoke test in seconds
+```
+
+## RL environment (`order_book/env.py`)
+
+`OrderBookEnv` is the Gymnasium prototype from before the research plan: 6 discrete actions, mark-to-
+market reward, episodes from a bank of burned-in snapshots. It still exposes the flow detector's
+signal in the observation, which the plan forbids for the executor; it is kept only so the snapshot
+and vectorisation machinery stays tested, and will be replaced by the execution MDP of plan
+section 5 (telescoping implementation-shortfall reward, MultiDiscrete action) in Phase 3.

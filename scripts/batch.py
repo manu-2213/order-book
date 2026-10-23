@@ -1,19 +1,22 @@
-"""Independent seeded runs in parallel processes: python -m simulation.batch."""
+"""Independent seeded runs in parallel processes: python -m scripts.batch."""
 
 import argparse
 from concurrent.futures import ProcessPoolExecutor
 import os
-from pathlib import Path
+from dataclasses import replace
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-from simulation.simulator import Simulator
+from order_book.config import BookConfig, SimConfig
+from order_book.simulator import Simulator
+from scripts import OUTPUTS
 
 
 def _mid_path(args):
     seed, steps, num_levels = args
-    sim = Simulator(seed, num_levels, analysis=False)
+    config = replace(SimConfig(), book=replace(BookConfig(), num_levels=num_levels))
+    sim = Simulator(seed, config, analysis=False)
     path = np.empty(steps)
     for t in range(steps):
         sim.step()
@@ -60,7 +63,6 @@ if __name__ == "__main__":
     parser.add_argument("--workers", type=int, default=None, help="processes (default: all cores)")
     args = parser.parse_args()
     seeds, paths = simulate_paths(args.runs, args.steps, args.levels, args.seed, args.workers)
-    out = Path(__file__).parent
-    np.savez_compressed(out / "price_paths.npz", seeds=seeds, mid=paths, tick_size=0.01)
-    plot_paths(paths, out / "price_paths.png")
-    print(f"saved {out / 'price_paths.png'} and {out / 'price_paths.npz'}")
+    np.savez_compressed(OUTPUTS / "price_paths.npz", seeds=seeds, mid=paths, tick_size=0.01)
+    plot_paths(paths, OUTPUTS / "price_paths.png")
+    print(f"saved {OUTPUTS / 'price_paths.png'} and {OUTPUTS / 'price_paths.npz'}")

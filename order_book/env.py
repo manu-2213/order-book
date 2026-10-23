@@ -5,10 +5,9 @@ from a pool of saved post-burn-in simulator states (pickled ``Simulator``
 objects, several seeds), so burn-in is paid once, not per episode. The env is
 picklable and seedable, so it runs under ``gymnasium.vector.AsyncVectorEnv``.
 
-    python -m simulation.env --seeds 8 --burn-in 5000      # writes simulation/states.pkl
+    python -m scripts.burn_in --seeds 8 --burn-in 5000      # writes outputs/states.pkl
 """
 
-import argparse
 import math
 import pickle
 from pathlib import Path
@@ -16,18 +15,19 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 
-from simulation.simulator import Simulator
+from order_book.config import SimConfig
+from order_book.simulator import Simulator
 
-STATES_PATH = Path(__file__).with_name("states.pkl")
+STATES_PATH = Path(__file__).resolve().parents[1] / "outputs" / "states.pkl"
 
 
-def burn_in(seeds, steps: int = 5_000, **simulator_kwargs) -> list[bytes]:
-    """Training-mode simulators run for ``steps`` and pickled, one per seed."""
+def burn_in(seeds, steps: int = 5_000, config: SimConfig | None = None) -> list[bytes]:
+    """Training-mode simulators run for ``steps`` and snapshotted, one per seed."""
     states = []
     for seed in seeds:
-        sim = Simulator(int(seed), analysis=False, **simulator_kwargs)
+        sim = Simulator(int(seed), config, analysis=False)
         sim.run(steps)
-        states.append(pickle.dumps(sim))
+        states.append(sim.snapshot())
     return states
 
 
@@ -45,7 +45,7 @@ class OrderBookEnv(gym.Env):
     ACTIONS = ("hold", "market_buy", "market_sell", "join_bid", "join_ask", "cancel_all")
 
     def __init__(self, states: list[bytes] | str | Path | None = None, decision_interval: int = 10,
-                 horizon: int = 500, cash: int = 1_000_000, shares: int = 100, order_size: int = 5,
+                 horizon: int = 10_000, cash: int = 1_000_000, shares: int = 100, order_size: int = 5,
                  depth: int = 5):
         if states is None or isinstance(states, (str, Path)):
             with open(STATES_PATH if states is None else states, "rb") as f:
@@ -60,7 +60,7 @@ class OrderBookEnv(gym.Env):
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
-        self.sim = pickle.loads(self.states[self.np_random.integers(len(self.states))])
+        self.sim = Simulator.restore(self.states[self.np_random.integers(len(self.states))])
         self.sim.reseed(int(self.np_random.integers(1 << 31)))
         self.cid = self.sim.join(self.cash, self.shares)
         self.account = self.sim.market.accounts[self.cid]
@@ -93,20 +93,9 @@ class OrderBookEnv(gym.Env):
             resting[order["side"]] += order["quantity"]
         arrays = book.get_book_arrays(self.depth)
         features = [
-            ps.spread, *ps.momentum, math.sqrt(ps.var_fast), ps.imbalance, ps.flow_signal, ps.attention,
+            ps.spread, *ps.momentum, math.sqrt(ps.var_fast), ps.imbalance, self.sim.detectors["flow"].signal, ps.attention,
             ps.mid - ps.ma_slow, self.account.shares - self.shares, resting["bid"], resting["ask"],
             self.account.free_cash / ps.mid,
         ]
         return np.concatenate([features, arrays["bid_volumes"], arrays["ask_volumes"]]).astype(np.float32)
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Burn in seeds and save the state pool.")
-    parser.add_argument("--seeds", type=int, default=8)
-    parser.add_argument("--burn-in", type=int, default=5_000)
-    parser.add_argument("--out", type=Path, default=STATES_PATH)
-    args = parser.parse_args()
-    states = burn_in(range(args.seeds), args.burn_in)
-    with open(args.out, "wb") as f:
-        pickle.dump(states, f)
-    print(f"saved {len(states)} states ({sum(map(len, states)) / 1e6:.1f} MB) to {args.out}")

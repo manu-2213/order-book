@@ -1,4 +1,4 @@
-"""Accounting, order routing and the shared per-step public state.
+"""Accounting and order routing.
 
 The book knows nothing about money. ``Market`` owns every account, keeps the
 cash reserved by resting bids and the shares reserved by resting asks as
@@ -6,13 +6,14 @@ running totals (updated on place, fill, cancel, self-trade cancel and window
 eviction), and settles both sides of every fill. Nobody can short or borrow,
 so cash and shares are conserved across the population.
 
-``PublicState`` is refreshed once per step from the book and the step's
-trades. Agents read it; none of them recompute averages or flow statistics.
+Trade reports carrying client identities stay inside settlement; agents only
+see ``public`` (a ``PublicState`` refreshed once per step) and their own
+accounts and orders.
 """
 
-import math
-
-from order_book import OrderBook, Report, Side
+from order_book.book import OrderBook, Report, Side
+from order_book.config import PublicStateConfig
+from order_book.public_state import PublicState
 
 
 class Account:
@@ -31,77 +32,6 @@ class Account:
         return self.shares - self.reserved_shares
 
 
-class PublicState:
-    """What everyone can see, computed once per step.
-
-    EWMA statistics at a fast and a slow horizon (mid, squared mid change,
-    traded volume), momentum = fast EMA - slow EMA for a fixed set of lookback
-    pairs, rolling signed aggressive flow over ``flow_window`` steps with an
-    EWMA of its imbalance for the detector, and an attention multiplier that
-    rises with relative volatility and volume (activity clustering).
-    """
-
-    def __init__(self, mid: int, lookbacks=((5, 30), (10, 60), (20, 120)), fast: int = 10,
-                 slow: int = 100, flow_window: int = 20, flow_memory: int = 10,
-                 flow_threshold: float = 0.3):
-        self.mid = float(mid)
-        self.last: int | None = None
-        self.best_bid = self.best_ask = None
-        self.spread = 0
-        self.ma_fast = self.ma_slow = float(mid)
-        self.var_fast = self.var_slow = 1.0  # ticks^2 per step
-        self.volume_fast = self.volume_slow = 0.0
-        self.lookbacks = lookbacks
-        self.momentum = [0.0] * len(lookbacks)
-        self.imbalance = self.flow_memory = self.flow_signal = 0.0
-        self.attention = 1.0
-        self.step_volume = 0
-        self._a_fast, self._a_slow = 2 / (fast + 1), 2 / (slow + 1)
-        self._alphas = [(2 / (f + 1), 2 / (s + 1)) for f, s in lookbacks]
-        self._emas = [[float(mid), float(mid)] for _ in lookbacks]
-        self._a_memory, self._threshold = 2 / (flow_memory + 1), flow_threshold
-        self._buy = [0] * flow_window
-        self._sell = [0] * flow_window
-        self.buy_flow = self.sell_flow = 0
-        self._n = 0
-
-    def update(self, book: OrderBook, buy_volume: int, sell_volume: int, last: int | None) -> None:
-        bid, ask = book.best_bid, book.best_ask
-        self.best_bid, self.best_ask = bid, ask
-        if bid is not None and ask is not None:
-            mid, self.spread = (bid + ask) / 2, ask - bid
-        else:
-            mid = float(last) if last is not None else self.mid
-        change, self.mid, self.last = mid - self.mid, mid, last
-        a, b = self._a_fast, self._a_slow
-        self.ma_fast += a * (mid - self.ma_fast)
-        self.ma_slow += b * (mid - self.ma_slow)
-        self.var_fast += a * (change * change - self.var_fast)
-        self.var_slow += b * (change * change - self.var_slow)
-        volume = self.step_volume = buy_volume + sell_volume
-        self.volume_fast += a * (volume - self.volume_fast)
-        self.volume_slow += b * (volume - self.volume_slow)
-        for k, (af, asl) in enumerate(self._alphas):
-            ema = self._emas[k]
-            ema[0] += af * (mid - ema[0])
-            ema[1] += asl * (mid - ema[1])
-            self.momentum[k] = ema[0] - ema[1]
-        i = self._n % len(self._buy)
-        self.buy_flow += buy_volume - self._buy[i]
-        self.sell_flow += sell_volume - self._sell[i]
-        self._buy[i], self._sell[i] = buy_volume, sell_volume
-        total = self.buy_flow + self.sell_flow
-        self.imbalance = (self.buy_flow - self.sell_flow) / total if total else 0.0
-        self.flow_memory += self._a_memory * (self.imbalance - self.flow_memory)
-        strength = (abs(self.flow_memory) - self._threshold) / (1 - self._threshold)
-        self.flow_signal = math.copysign(min(strength, 1.0), self.flow_memory) if strength > 0 else 0.0
-        self._n += 1
-        if self._n * self._a_slow > 1:  # past the slow warm-up; before it the ratios are meaningless
-            relative_vol = math.sqrt(self.var_fast / self.var_slow) if self.var_slow > 0 else 1.0
-            relative_volume = self.volume_fast / self.volume_slow if self.volume_slow > 0 else 1.0
-            self.attention = min(3.0, max(0.5, 1.0 + 0.5 * (relative_vol - 1) + 0.5 * (relative_volume - 1)))
-
-
 class Market:
     """Routes agent orders to the book and settles cash/shares for both parties.
 
@@ -110,18 +40,21 @@ class Market:
     mode only the rolling aggregates in ``public`` are kept.
     """
 
-    def __init__(self, book: OrderBook, analysis: bool = True, **public_kwargs):
+    def __init__(self, book: OrderBook, analysis: bool = True, public: PublicStateConfig | None = None):
         self.book = book
         self.analysis = analysis
         book.keep_trades = analysis
         self.accounts: dict[int, Account] = {}
-        self.public = PublicState(book.initial_mid_price, **public_kwargs)
+        self.public = PublicState(book.initial_mid_price, public)
         self.step = 0
         self.last_price: int | None = None
         self.tape: list[tuple] | None = [] if analysis else None
         self.budget_rejects = {"bid": 0, "ask": 0}
         self.window_rejects = {"bid": 0, "ask": 0}
         self._buy_volume = self._sell_volume = 0
+        self._flow_buy = self._flow_sell = 0       # aggressive volume visible to detectors this step
+        self._step_trades: list[tuple] = []        # anonymous (side, price, quantity) aggressive fills
+        self.hidden_aggressors: set[int] = set()   # analysis-only counterfactual, see ``hide``
 
     def open_account(self, cid: int, cash: int, shares: int) -> Account:
         if cid in self.accounts:
@@ -163,10 +96,17 @@ class Market:
                 else:  # the maker was a resting bid, filled at its own price
                     buyer.reserved_cash -= notional
             self.last_price = price
+            filled = report["filled_quantity"]
             if side == "bid":
-                self._buy_volume += report["filled_quantity"]
+                self._buy_volume += filled
             else:
-                self._sell_volume += report["filled_quantity"]
+                self._sell_volume += filled
+            if report["client_id"] not in self.hidden_aggressors:
+                if side == "bid":
+                    self._flow_buy += filled
+                else:
+                    self._flow_sell += filled
+                self._step_trades.extend((side, t["price"], t["quantity"]) for t in trades)
             if self.tape is not None:
                 aggressor = "buy" if side == "bid" else "sell"
                 self.tape.extend((self.step, t["price"], t["quantity"], aggressor,
@@ -240,7 +180,20 @@ class Market:
         for order_id in list(self.book.client_order_ids(cid)):
             self.cancel(cid, order_id)
 
+    def hide(self, cid: int) -> None:
+        """Make ``cid``'s aggressive trades invisible to the public flow statistics and detectors.
+
+        The trades still happen, settle, move the price and count in the
+        public volume totals; only the signed flow window and the anonymous
+        per-step trade list omit them. This deliberately breaks the
+        no-identity rule and exists only for the analysis-mode counterfactual
+        that separates impact cost from leakage cost.
+        """
+        self.hidden_aggressors.add(cid)
+
     def end_step(self) -> None:
-        self.public.update(self.book, self._buy_volume, self._sell_volume, self.last_price)
-        self._buy_volume = self._sell_volume = 0
+        self.public.update(self.book, self._buy_volume, self._sell_volume, self.last_price,
+                           self._flow_buy, self._flow_sell, self._step_trades)
+        self._buy_volume = self._sell_volume = self._flow_buy = self._flow_sell = 0
+        self._step_trades = []
         self.step += 1

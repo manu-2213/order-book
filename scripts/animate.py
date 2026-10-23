@@ -1,11 +1,9 @@
 """Render the simulation as a video: price/inventory on the left, live order book on the right.
 
-Run from the repo root: python -m simulation.animate [--stride 10] [--fps 30]
+Run from the repo root: python -m scripts.animate [--stride 10] [--fps 30]
 """
 
 import argparse
-from pathlib import Path
-
 import imageio_ffmpeg
 import matplotlib
 
@@ -14,12 +12,14 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib.animation import FFMpegWriter, FuncAnimation  # noqa: E402
 
-from simulation.run import simulate  # noqa: E402
+from order_book.history import record  # noqa: E402
+from order_book.simulator import Simulator  # noqa: E402
+from scripts import OUTPUTS  # noqa: E402
 
 plt.rcParams["animation.ffmpeg_path"] = imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def animate(hist, names, path=Path(__file__).with_name("simulation.mp4"),
+def animate(hist, names, path=OUTPUTS / "simulation.mp4",
             stride=10, fps=30, window=1000, half_depth=25, tick=0.01):
     """One frame per ``stride`` steps; price panels show the trailing ``window`` steps,
     the book panel shows ``half_depth`` ticks either side of the current mid."""
@@ -95,6 +95,8 @@ if __name__ == "__main__":
     parser.add_argument("--steps", type=int, default=10_000)
     parser.add_argument("--stride", type=int, default=10, help="simulation steps per video frame")
     parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
-    _, hist, names = simulate(steps=args.steps, record_books=True)
-    animate(hist, names, stride=args.stride, fps=args.fps)
+    sim = Simulator(args.seed)
+    hist = record(sim, args.steps, record_books=True)
+    animate(hist, list(sim.groups), stride=args.stride, fps=args.fps)

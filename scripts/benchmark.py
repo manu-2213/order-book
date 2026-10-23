@@ -1,6 +1,6 @@
 """Steps per second of the background market, plus a cProfile summary.
 
-Run from the repo root: python -m simulation.benchmark [--steps 20000]
+Run from the repo root: python -m scripts.benchmark [--steps 20000]
 """
 
 import argparse
@@ -8,7 +8,7 @@ import cProfile
 import pstats
 import time
 
-from simulation.simulator import Simulator
+from order_book.simulator import Simulator
 
 
 def main():
