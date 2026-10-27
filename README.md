@@ -71,10 +71,30 @@ Tests: `python -m pytest`
 
 ## Documentation
 
-`docs/simulator.tex` (compiled: `docs/simulator.pdf`) documents every rule, equation, default
-parameter, the randomness model, the validation methodology and the measured results. It is written
-so that sections can be lifted into the paper. Build it with `cd docs && latexmk -pdf simulator.tex`.
-The summary below is a map; the document is the reference.
+`docs/simulator.tex` (compiled: `docs/simulator.pdf`, 26 pages) is the complete, self-contained technical
+and mathematical reference for the project. It includes:
+1. **Part I — Conceptual Primer & Codebase Navigation**: a beginner-friendly introduction to limit order
+   books, metaorders, implementation shortfall, mechanical market impact vs. information leakage, the
+   exact file-by-file module map, internal data structures (`OrderedDict` FIFO queues, sorted price lists,
+   running account reservations), and the 6-stage `Simulator.step()` execution pipeline.
+2. **Part II — The Simulator**: exact mathematical equations for `PublicState`, the `SeedSequence`
+   common-random-number tree, every background agent (`FundamentalValue`, `NoiseFlow`, `Speculators` with
+   Brock–Hommes switching, `InstitutionalTrader`, Avellaneda–Stoikov `MarketMaker` with volatility
+   fragility and detection response, `OrderAnticipator`), every detector (`FlowDetector`, `RunsDetector`,
+   `CusumDetector`, `VolumeClockDetector`, `RegularityDetector`, and the 3-class `LearnedDetector`), and
+   Phase 1 stylised-facts and square-root impact validation (`outputs/validation_default.json`).
+3. **Part III — Phase 2 Measurement & Counterfactual Experiments**: mathematical definitions of all 12
+   baseline strategies, A0 parameter calibration (`outputs/calibration.json`), Mann–Whitney ROC AUC and
+   paired-bootstrap protocol, and full empirical tables for **E2** (`outputs/e2/summary.json`), **E3**
+   (`outputs/e3/summary.json`), **E7** (`outputs/e7/summary.json`), and **E7b** (`outputs/e7b/summary.json`).
+4. **Part IV — Phase 3 RL Executor & Hyperparameter Sweep**: the 13-feature sign-normalised observation
+   space, 15-way `(size_mult, placement)` action grid, telescoping implementation-shortfall reward
+   theorem, `PolicyNet` actor–critic architecture, GAE + clipped PPO trainer, parallel W&B sweep runner
+   (`scripts/sweep_rl.py`), and the sweep results (`outputs/rl/sweep/summary.json`) showing the learned
+   policy beating TWAP at both $Q/V = 0.20$ ($+2.40$ vs. $+2.82$ bps) and $Q/V = 0.40$ ($+4.74$ vs.
+   $+5.12$ bps).
+
+Build the PDF with `cd docs && latexmk -pdf simulator.tex`.
 
 ## Layout
 
@@ -93,12 +113,13 @@ order_book/              the library (pip install -e .)
   history.py             per-step recording of an analysis run
   validation.py          stylised facts, impact statistics, pass/fail table (plan section 4.2)
   impact.py              paired square-root-impact measurement with injected metaorders
-  execution/             ExecutionTask, ExecutorAgent, Strategy; 12 baselines; Calibration + fitting
+  execution/             ExecutionTask, ExecutorAgent, Strategy; 12 baselines; Calibration + fitting;
+                         Phase 3 RL executor (features, policy, env, ppo)
   detectors/             + features.py, statistical.py (A2: runs, cusum, volume_clock, regularity),
                          learned.py (A3: logistic classifier on public features)
   scoring.py             ROC AUC, detection delay, false alarms; bootstrap CI, paired diff, CVaR, Holm
-  experiments.py         AdversarySpec, EpisodeSpec, E2Config, E3Config, runner and summaries
-  env.py                 OrderBookEnv: Gymnasium prototype (to be replaced by the execution MDP)
+  experiments.py         AdversarySpec, EpisodeSpec, E2/E3/E7/E7b configs, runner and summaries
+  env.py                 OrderBookEnv: generic-trader Gymnasium prototype (execution uses execution/env.py)
 scripts/                 CLI entry points, run as python -m scripts.<name>; write to outputs/
 tests/                   pytest suite (python -m pytest)
 docs/                    LaTeX documentation
@@ -170,7 +191,7 @@ Commands (from the repo root; outputs go to `outputs/`):
 
 ```sh
 pip install -e .                          # or: uv pip install -e .
-python -m pytest                          # 115 tests, ~5 s
+python -m pytest                          # 134 tests, ~8 s
 python -m scripts.validate                # stylised facts + paired impact, 5 seeds x 10k steps
 python -m scripts.validate --seeds 10 --steps 50000 --preset private
 python -m scripts.impact --seeds 20       # paired square-root impact, saves paths
@@ -198,19 +219,48 @@ python -m scripts.burn_in --seeds 8       # RL start-state pool -> outputs/state
 - **E3** (`scripts/e3_leakage.py`): every baseline x size x {A0, A1-medium, A4} x {visible, invisible}
   on the same seeds (+ no-executor runs); leakage = IS(visible) - IS(invisible) paired by seed with
   bootstrap CI, p-value and Holm correction; prints the Phase 2 gate verdict.
+- **E7** (`scripts/e7_regimes.py`): the same counterfactual across a grid of market regimes
+  (`regime(liquidity, institutions, makers, mm_size_scale)`) and executor sizes, mapping where leakage
+  appears as liquidity and institutional cover fall and the order becomes a large share of flow (H4).
 
 ```sh
 python -m scripts.calibrate                        # ~3 min; writes outputs/calibration.json
 python -m scripts.train_detector                   # verbose per epoch; writes outputs/detectors/learned.npz
 python -m scripts.e2_detectability --workers 8     # 420 episodes -> outputs/e2/
 python -m scripts.e3_leakage --workers 8 --paths   # 4,380 episodes -> outputs/e3/ (gate verdict at the end)
-python -m scripts.<any of the four> --quick        # smoke test in seconds
+python -m scripts.e7_regimes --workers 8           # leakage across market regimes -> outputs/e7/
+python -m scripts.e7_strength --workers 8          # detector-strength sweep in low-cover -> outputs/e7b/
+python -m scripts.<any> --quick                    # smoke test in seconds
 ```
 
-## RL environment (`order_book/env.py`)
+## Phase 3: RL executor (`order_book/execution/`)
+
+The learned executor is built on the Phase 2 machinery: it is one more `Strategy` carried by the same
+`ExecutorAgent`, with the same hard limits and forced completion, so it is scored by the same
+experiments as the baselines.
+
+- **MDP** (`execution/features.py`): a 13-feature, public-data-only observation (own progress, schedule
+  gap, footprint share, imbalance, momentum, running shortfall, ...) and a 15-way `size x placement`
+  action grid; the reward is telescoping implementation shortfall in bps (an episode's rewards sum to
+  minus its quantity-weighted shortfall).
+- **Environment** (`execution/env.py`): `ExecutionEnv.rollout` runs whole episodes in the E7b candidate
+  market (`phase3_config`: liquid `low_cover`, two detecting makers); `PolicyStrategy`/`PolicyNet` are
+  the actor-critic policy.
+- **Training** (`execution/ppo.py`, `scripts/train_rl.py`): PyTorch PPO over whole episodes, verbose per
+  iteration, with periodic greedy evaluation against TWAP.
+
+```sh
+python -m scripts.train_rl --iterations 300 --episodes 32 --wandb   # -> outputs/rl/policy.pt, best_policy.pt, history.json
+python -m scripts.sweep_rl --workers 6 --wandb --sync-existing      # parallel sweep, live stdout + W&B, resumable
+python -m scripts.train_rl --quick                                  # smoke test, ~1 min
+# score the trained policy against the baselines through the leakage counterfactual:
+python -m scripts.e7_strength --strategies rl@outputs/rl/policy.pt twap_market --workers 8
+```
+
+## Generic-trader prototype (`order_book/env.py`)
 
 `OrderBookEnv` is the Gymnasium prototype from before the research plan: 6 discrete actions, mark-to-
 market reward, episodes from a bank of burned-in snapshots. It still exposes the flow detector's
 signal in the observation, which the plan forbids for the executor; it is kept only so the snapshot
-and vectorisation machinery stays tested, and will be replaced by the execution MDP of plan
-section 5 (telescoping implementation-shortfall reward, MultiDiscrete action) in Phase 3.
+and vectorisation machinery stays tested, and is superseded for execution by
+`order_book/execution/env.py` (the Phase 3 MDP above).

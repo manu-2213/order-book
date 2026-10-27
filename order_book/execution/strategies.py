@@ -285,6 +285,10 @@ def all_baselines(calibration: Calibration | None = None) -> dict[str, Strategy]
 
 
 def make_strategy(name: str, calibration: Calibration | None = None) -> Strategy:
+    """Build a baseline by name, or a trained RL executor with ``"rl@<path-to-weights>"``."""
+    if name.startswith("rl@"):
+        from order_book.execution.policy import PolicyStrategy  # lazy: torch only needed for the learned policy
+        return PolicyStrategy.from_file(name[3:], deterministic=True)
     strategies = all_baselines(calibration)
     if name not in strategies:
         raise KeyError(f"unknown strategy {name!r}; available: {sorted(strategies)}")

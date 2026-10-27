@@ -7,7 +7,7 @@ name = "order-book"
 version = "0.1.0"
 description = "Agent-based limit order book market for stealth-execution research"
 requires-python = ">=3.10"
-dependencies = ["numpy", "matplotlib", "gymnasium"]
+dependencies = ["numpy", "matplotlib", "gymnasium", "torch", "wandb"]
 
 [project.optional-dependencies]
 dev = ["pytest", "ipykernel", "imageio-ffmpeg"]

@@ -114,3 +114,4 @@ def held_out_detectors() -> dict[str, Detector]:
     """The A2 set, by name."""
     return {"runs": RunsDetector(), "cusum": CusumDetector(), "volume_clock": VolumeClockDetector(),
             "regularity": RegularityDetector()}
+

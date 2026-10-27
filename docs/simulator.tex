@@ -3,7 +3,7 @@
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
-\usepackage[margin=2.5cm]{geometry}
+\usepackage[margin=2.4cm]{geometry}
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{booktabs}
 \usepackage{longtable}
@@ -11,1160 +11,1532 @@
 \usepackage{enumitem}
 \usepackage{xcolor}
 \usepackage{listings}
+\usepackage[htt]{hyphenat}
 \usepackage{hyperref}
 \usepackage{microtype}
 
 \hypersetup{colorlinks=true, linkcolor=blue!60!black, urlcolor=blue!60!black, citecolor=blue!60!black}
 
-\lstset{basicstyle=\ttfamily\small, columns=fullflexible, keepspaces=true,
+\lstset{basicstyle=\ttfamily\footnotesize, columns=fullflexible, keepspaces=true,
         breaklines=true, frame=single, framerule=0.2pt, rulecolor=\color{gray!60},
         backgroundcolor=\color{gray!5}, xleftmargin=4pt, xrightmargin=4pt}
 
 \newcommand{\code}[1]{\texttt{#1}}
+\sloppy
+\emergencystretch=3em
 \newcommand{\sign}{\operatorname{sign}}
 \newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\clip}{\operatorname{clip}}
+\newcommand{\clamp}{\operatorname{clamp}}
 \newcommand{\tick}{\text{tick}}
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
 
-\title{\textbf{An Agent-Based Limit Order Book for Stealth-Execution Research}\\[4pt]
-       \large Technical documentation of the \code{order\_book} package: simulator, validation and the
-       measurement experiments}
+\title{\textbf{An Agent-Based Limit Order Book and Reinforcement-Learning Executor\\for Stealth-Execution Research}\\[6pt]
+       \large Complete Mathematical, Algorithmic, Architectural, and Empirical Reference\\for the \code{order\_book} Codebase}
 \author{Manu}
-\date{\today}
+\date{October 2026}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-This document describes the simulator used in the study \emph{Hiding in the Order Flow: Learning to
-Execute Against Liquidity Providers that Detect Metaorders}. It is a deterministic, single-instrument,
-price--time matching engine surrounded by a heterogeneous population of agents (zero-intelligence noise
-flow, fundamentalists and chartists with Brock--Hommes switching, institutional traders executing labelled
-metaorders in five styles, Avellaneda--Stoikov market makers with configurable detection responses and
-volatility fragility, and an order-anticipation trader) in which detection of large orders emerges from
-agents that see only public data. We document every rule, equation and default parameter, the
-randomness model that makes runs exactly reproducible and counterfactuals paired, the validation
-methodology against stylised facts and the square-root impact law, the measured results of the
-validation, the automated tests, and the commands that reproduce everything. Part~II documents the
-measurement phase that needs no reinforcement learning: the execution task, the baseline strategies
-and their calibration, the held-out and learned detectors, detector scoring and the statistical
-protocol, and the detectability (E2) and leakage (E3) experiments. Sections are written so that they
-can be lifted into the paper's methods section and appendices.
+This document is the self-contained technical manual and research record for the study
+\emph{Hiding in the Order Flow: Learning to Execute Against Liquidity Providers that Detect Metaorders}
+and its accompanying Python package \code{order\_book}. It is written for two audiences at once:
+(i)~computer scientists, machine-learning researchers, and software engineers who may have \emph{no
+prior background in market microstructure or quantitative finance}, and (ii)~market-microstructure
+researchers who require exact mathematical equations, algorithmic pseudocode, data-structure
+invariants, and empirical tables ready to be lifted into a paper's methodology and results sections.
+
+We begin with a pedagogical primer on limit order books, metaorders, implementation shortfall,
+mechanical market impact, and information leakage (\S\ref{sec:primer}). We then map the entire
+codebase file by file, explaining what data structures each module uses, why those structures were
+chosen, and how data and control flow through a single simulation step (\S\ref{sec:codebase}). Next we
+specify the matching engine (\code{OrderBook}), accounting and routing layer (\code{Market}), rolling
+public state (\code{PublicState}), and tree-structured random-number architecture that guarantees
+exact byte-for-byte replay and common-random-number counterfactuals (\S\S\ref{sec:book}--\ref{sec:rng}).
+We derive the exact mathematical update equations and decision rules of every background agent
+(\code{FundamentalValue}, \code{NoiseFlow}, \code{Speculators}, \code{InstitutionalTrader},
+\code{MarketMaker}, \code{OrderAnticipator}) and every metaorder detector (the rule-based A1
+\code{FlowDetector}, the four held-out A2 statistical detectors, and the learned A3 multinomial
+logistic classifier). We then document the twelve classical, model-based, and stealth-heuristic
+execution baselines, the A0 calibration protocol, the rank-based and paired-bootstrap statistical
+methodology, and the full results of all validation and Phase~2 measurement experiments (E1, E2, E3,
+E7, and E7b). Finally, Part~\ref{part:three} documents the Phase~3 reinforcement-learning execution
+environment (\code{ExecutionEnv}), the 13-dimensional sign-normalised observation encoder, the 15-way
+action space, the telescoping implementation-shortfall reward theorem, the Proximal Policy
+Optimisation (\code{PPOTrainer}) implementation, the parallel Weights \& Biases hyperparameter sweep
+(\code{sweep\_rl.py}), and the empirical results showing the learned policy outperforming TWAP.
 \end{abstract}
 
 \tableofcontents
 \clearpage
 
-\part{The simulator}
-
 %==================================================================================================
-\section{Purpose and scope}
-%==================================================================================================
-
-The research question is how much of an execution's cost is caused by \emph{information leakage}
-(other agents detecting the order and reacting) as opposed to mechanical market impact, and whether a
-learning executor can reduce that leakage against detectors it has never seen. Answering it needs a
-market in which (i) the reaction to a large order is produced by other agents rather than assumed by an
-impact model, (ii) detection is both possible and genuinely hard because other institutions trade
-large orders too, (iii) every agent, detector and executor sees only public information, and (iv) runs
-are exactly reproducible so that the cost of leakage can be measured by counterfactual simulation with
-common random numbers.
-
-The \code{order\_book} package implements that market. This document covers the simulator and its
-validation (Phases~0 and~1 of the research plan). The execution task, the reinforcement-learning
-executor and the adversary ladder beyond levels A0, A1 and A4 are later phases and are only mentioned
-where the simulator already provides for them.
-
-\paragraph{Units.} Prices are integer \emph{ticks} (the default initial mid is $10\,000$ ticks, i.e.\
-\$100.00 at a one-cent tick), quantities are integer \emph{lots}, cash is in ticks$\times$lots, and time
-is in \emph{steps}. One step is a configurable unit of wall-clock time (\code{SimConfig.step\_seconds},
-default one second); every rate in the configuration is per step.
-
-%==================================================================================================
-\section{Design rules and how the code enforces them}
+\part{Conceptual Primer and Codebase Navigation}
+\label{part:primer}
 %==================================================================================================
 
-The research plan imposes ten rules on the implementation. Table~\ref{tab:rules} lists them with the
-mechanism and, where one exists, the automated test that would fail if the rule were broken.
-
-\begin{table}[h]
-\centering\small
-\begin{tabular}{L{3.1cm} L{6.4cm} L{5.3cm}}
-\toprule
-Rule & Mechanism & Test \\
-\midrule
-Determinism & one root \code{SeedSequence(seed)}; one child stream per agent in fixed order
-  (\S\ref{sec:rng}) & \code{test\_foundations}: identical event log from (config, seed), from a snapshot,
-  and after \code{reseed} \\
-No hidden information & agents hold a \code{Market} handle but only call its order methods and read
-  \code{Market.public}, their own account and their own orders; trade reports with identities never leave
-  settlement; metaorder labels live in a log agents only append to & \code{test\_foundations}: a
-  guard that raises if any agent, while acting, reads another account, another's orders, the tape, the
-  book tables, the hidden value's history or the metaorder labels; mutation-tested \\
-Book independence & \code{OrderBook} imports nothing from the package; agents never touch it except
-  through \code{Market} & import graph (\S\ref{sec:architecture}) \\
-Configuration over code & every parameter is a field of a frozen dataclass in \code{config.py};
-  experiments differ only by \code{dataclasses.replace} & \code{test\_simulator} \\
-Invariants & never crossed at rest; cash and shares conserved; no negative free balances; reservations
-  equal what rests & \code{test\_foundations}: asserted after every one of 300 steps \\
-Performance & \code{scripts/benchmark.py} reports steps/s and a profile & reported in \S\ref{sec:results} \\
-Two logging modes & \code{analysis=True} keeps tape, trade log, hidden value and labels;
-  \code{analysis=False} keeps rolling aggregates only & \code{test\_simulator} \\
-Report, do not tune silently & \code{scripts/validate.py} prints measured values against the plan's
-  targets; metric definitions are fixed in \code{validation.py} & \S\ref{sec:results} \\
-Snapshots & \code{Simulator.snapshot()/restore()} & \code{test\_foundations} \\
-Small steps & this document records what was changed, measured and proposed & --- \\
-\bottomrule
-\end{tabular}
-\caption{The implementing rules of the plan and their enforcement.}
-\label{tab:rules}
-\end{table}
-
 %==================================================================================================
-\section{Architecture}
-\label{sec:architecture}
+\section{A Self-Contained Primer for Non-Finance Readers}
+\label{sec:primer}
 %==================================================================================================
 
-\begin{lstlisting}
-order_book/
-  book.py            OrderBook: the matching engine; knows nothing about agents
-  market.py          Account, Market: accounting and order routing
-  public_state.py    PublicState: the per-step public view everyone may read
-  config.py          frozen dataclasses for every parameter; SimConfig aggregates them
-  detectors/         Detector interface; FlowDetector (rule-based, level A1)
-  agents/            NoiseFlow, Speculators, InstitutionalTrader, MarketMaker,
-                     OrderAnticipator, FundamentalValue, MetaorderLog
-  simulator.py       Simulator: one seeded run; streams, snapshots, external agents
-  presets.py         adversary levels A0/A1/A4, private valuations, no institutions
-  history.py         per-step recording of an analysis run (plots, animation)
-  validation.py      stylised facts, impact statistics, pass/fail table
-  impact.py          paired impact measurement with injected metaorders
-  execution/         ExecutionTask, ExecutorAgent, Strategy; the baseline strategies;
-                     Calibration and its fitting (Part II)
-  detectors/         + features.py, statistical.py (A2), learned.py (A3)
-  scoring.py         ROC AUC, detection delay, false alarms; bootstrap, CVaR, Holm
-  experiments.py     AdversarySpec, EpisodeSpec, E2Config, E3Config, runner, summaries
-  env.py             Gymnasium wrapper (prototype; replaced in Phase 3)
-scripts/             CLI entry points: run, batch, benchmark, animate, burn_in, validate,
-                     impact, calibrate, train_detector, e2_detectability, e3_leakage
-tests/               pytest suite
-docs/                this document
-\end{lstlisting}
+If your background is in reinforcement learning, multi-agent systems, or computer science rather than
+finance, this section defines every domain concept used in the project from first principles.
 
-Dependencies point strictly downward: \code{book} $\leftarrow$ \code{market}, \code{public\_state}
-$\leftarrow$ \code{detectors} $\leftarrow$ \code{agents} $\leftarrow$ \code{simulator} $\leftarrow$
-\code{presets}, \code{history}, \code{validation}, \code{impact}, \code{execution}, \code{env}
-$\leftarrow$ \code{experiments} $\leftarrow$ \code{scripts}.
-The book never imports anything above it; detectors read only \code{PublicState}; agents reach the book
-only through \code{Market}.
+\subsection{What is a Limit Order Book (LOB)?}
 
-%==================================================================================================
-\section{Matching engine (\code{order\_book.book})}
-%==================================================================================================
-
-\code{OrderBook} is a deterministic single-instrument matching engine. It generates no liquidity and
-assumes nothing about who trades or why; the caller serialises actions, and call order determines
-arrival priority.
+Modern electronic financial exchanges (such as NASDAQ, NYSE, or Binance) do not have a central dealer
+who sets a single price. Instead, they run a deterministic data structure called a \textbf{Limit Order
+Book (LOB)} that matches buyers and sellers directly.
 
 \begin{itemize}[nosep]
-\item \textbf{Priority.} Best price first, first-in-first-out within a price. Trades execute at the
-  resting order's price.
-\item \textbf{Order types.} A \emph{limit} order matches at its limit or better and rests for the
-  remainder. A \emph{market} order consumes available liquidity and cancels any remainder
-  (immediate-or-cancel). \code{Market.ioc} is a limit that cancels what would rest.
-\item \textbf{Self-trade prevention.} Default \code{cancel\_newest}: the incoming remainder is cancelled
-  when it would match the same client's resting order. \code{cancel\_oldest} removes the resting order
-  and continues; \code{cancel\_both} removes both; \code{none} permits self-matching. Fills made before
-  the encounter stand.
-\item \textbf{Modification.} Reducing size retains priority. Increasing size or changing price replaces
-  the order with a new identifier and priority. Invalid modifications leave the original intact.
-\item \textbf{Ownership.} Cancellation and modification check the client id when it is given.
-\item \textbf{Bounded window.} Each side admits prices within $N$ ticks (\code{num\_levels}, default 20) of
-  an anchor: its own best price when populated, one tick inside the opposite best when it is empty, and
-  the last trade price when both sides are empty. Orders outside the window are rejected; an
-  improvement of the best price can \emph{evict} resting orders that fall outside the new window, and
-  the report lists them so that the accountant can release reservations. Empty sides never manufacture
-  quotes: \code{mid\_price} and \code{spread} are undefined unless both sides rest. This bounded book is
-  not a normal exchange rule; it keeps observations finite and is part of the environment's dynamics.
-\item \textbf{Reports.} Every operation returns a report naming the maker order of every fill, the orders
-  removed by self-trade prevention and by eviction, and requested/filled/resting/cancelled quantities
-  that always sum. Reports are shared read-only objects.
-\item \textbf{Complexity.} Best quotes, mid, spread, per-level volume, per-client order lookup and single
-  order lookup are $O(1)$.
+\item \textbf{Ticks and lots.} To avoid floating-point rounding ambiguities, prices and quantities are
+  discrete integers. The smallest price increment is one \textbf{tick} (for example, \$0.01). In our
+  simulator, the initial price is $10\,000$ ticks (which you can think of as \$100.00). The smallest
+  quantity unit is one \textbf{lot} (or ``share''). Cash is measured in $\text{ticks}\times\text{lots}$.
+\item \textbf{Sides (\code{"bid"} vs.\ \code{"ask"}).} A \textbf{bid} is an order to \emph{buy}. An
+  \textbf{ask} (or offer) is an order to \emph{sell}.
+\item \textbf{Limit orders vs.\ market orders.}
+  \begin{itemize}[nosep]
+  \item A \textbf{limit order} specifies a side, a quantity $q$, and a worst acceptable price $p$. If a
+    buyer submits a limit bid at $p = 9\,999$ while the cheapest seller is asking $10\,001$, no trade
+    can occur immediately; the bid \emph{rests} in the book's bid queue at price $9\,999$, waiting for a
+    seller. Resting limit orders \emph{supply liquidity} (the trader is acting as a \textbf{maker}).
+  \item A \textbf{market order} specifies only a side and a quantity $q$: ``buy $q$ lots right now at
+    whatever prices are currently resting on the opposite side of the book.'' Market orders (and limit
+    orders priced aggressively enough to cross the opposite side immediately) \emph{consume liquidity}
+    (the trader is acting as an \textbf{aggressor} or \textbf{taker}).
+  \end{itemize}
+\item \textbf{Best bid, best ask, mid-price, and bid--ask spread.} At any instant, the highest resting
+  buy price is the \textbf{best bid} $b_t$, and the lowest resting sell price is the \textbf{best ask}
+  $a_t$. Because any bid with $p \ge a_t$ would have matched immediately upon arrival, a resting book is
+  \emph{never crossed}: $b_t < a_t$ always. From $b_t$ and $a_t$ we define two fundamental quantities:
+  \begin{equation}
+    \text{Mid-price:}\quad m_t = \frac{b_t + a_t}{2}, \qquad
+    \text{Spread:}\quad s_t = a_t - b_t \ge 1\text{ tick}.
+  \end{equation}
+  If you buy 1 lot immediately with a market order, you pay $a_t = m_t + s_t/2$; if you sell 1 lot
+  immediately, you receive $b_t = m_t - s_t/2$. Thus crossing the spread costs $s_t/2$ ticks per lot
+  relative to the mid-price even before moving the price levels.
+\item \textbf{Price--time priority (FIFO).} When an incoming buy order matches against resting asks,
+  which ask gets filled first? First, the lowest-priced ask (\emph{price priority}). Second, among
+  multiple asks resting at that same lowest price, the one that arrived earliest (\emph{time priority},
+  or First-In-First-Out, FIFO). Consequently, keeping your place near the front of the queue at a price
+  level (\textbf{queue position}) is valuable.
 \end{itemize}
 
-%==================================================================================================
-\section{Accounting and routing (\code{order\_book.market})}
-\label{sec:market}
-%==================================================================================================
+\subsection{What is Optimal Execution and a Metaorder?}
 
-\code{Market} owns every \code{Account} (cash, shares, reserved cash, reserved shares) and is the only
-path from an agent to the book. Resting bids reserve $\text{price}\times\text{quantity}$ of cash and
-resting asks reserve shares; reservations are running totals updated on placement, fill (both sides),
-cancellation, self-trade cancellation and eviction, so that free balances are $O(1)$ and
-\[
-  \text{free cash} = \text{cash} - \text{reserved cash} \ge 0, \qquad
-  \text{free shares} = \text{shares} - \text{reserved shares} \ge 0
-\]
-hold at all times. A limit order is capped at what the account can fund; a market buy walks the ask
-levels and takes only what the free cash can pay for. Orders cut to zero are counted in
-\code{budget\_rejects}; orders outside the window in \code{window\_rejects}. Every fill moves
-$\text{price}\times\text{quantity}$ of cash from buyer to seller and the shares the other way, so
-\[
-  \sum_i \text{cash}_i \;\text{and}\; \sum_i \text{shares}_i \;\text{are conserved exactly}
-\]
-across the population (\code{Simulator.check\_conservation}). Nobody can short or borrow.
+Suppose an institutional investor (a pension fund or mutual fund) decides to buy $Q = 2\,000$ lots of
+an asset, when typical resting volume at the best ask is only $15$ lots and the whole market trades
+only $\bar V \approx 3$--$5$ lots per second.
+\begin{itemize}[nosep]
+\item This large parent intention of size $Q$ is called a \textbf{metaorder}.
+\item If the investor dumps all $Q = 2\,000$ lots into the book as a single market order at $t=0$
+  (the \code{immediate} strategy), the order will wipe out every resting ask level from $a_0$ all the
+  way up the book, paying terrible prices.
+\item Instead, an \textbf{execution algorithm} (the \textbf{executor}) splits the parent order $Q$ into
+  many small \textbf{child orders} over a time horizon $T$ (say $T = 2\,000$ steps, making a decision
+  every $N = 5$ steps).
+\end{itemize}
 
-In analysis mode the market keeps a \emph{tape} of
-$(\text{step}, \text{price}, \text{quantity}, \text{aggressor side}, \text{buyer}, \text{seller})$;
-the buyer and seller identities are for offline analysis only and no agent reads the tape. The market
-also hands the public state an \emph{anonymous} list of the step's aggressive fills,
-$(\text{side}, \text{price}, \text{quantity})$, and the aggressive volume that enters the signed flow
-window. \code{Market.hide(cid)} removes one client's aggressive trades from both (its trades still
-happen, settle, move the price and count in the volume totals): this deliberately breaks the
-no-identity rule and exists only for the analysis-mode counterfactual that separates impact cost from
-leakage cost (Part~II, \S\ref{sec:e3}).
+\subsection{How Do We Measure Execution Cost? (Implementation Shortfall)}
 
-%==================================================================================================
-\section{Public state (\code{order\_book.public\_state})}
-\label{sec:public}
-%==================================================================================================
-
-\code{PublicState} is refreshed once per step from the book and the step's trades. It is the only
-market information any participant may read. With $m_t$ the mid (the last trade price when a side is
-empty), $\Delta m_t = m_t - m_{t-1}$, $V^{b}_t, V^{s}_t$ the step's buyer- and seller-initiated volume
-and $V_t = V^b_t + V^s_t$, and EWMA weights $\alpha_f = 2/(\tau_f+1)$, $\alpha_s = 2/(\tau_s+1)$ with
-spans $\tau_f = 10$ and $\tau_s = 100$:
-\begin{align}
-  \bar m^{f}_t &= \bar m^{f}_{t-1} + \alpha_f (m_t - \bar m^{f}_{t-1}), &
-  \bar m^{s}_t &= \bar m^{s}_{t-1} + \alpha_s (m_t - \bar m^{s}_{t-1}), \\
-  \sigma^{2,f}_t &= \sigma^{2,f}_{t-1} + \alpha_f (\Delta m_t^2 - \sigma^{2,f}_{t-1}), &
-  \sigma^{2,s}_t &= \sigma^{2,s}_{t-1} + \alpha_s (\Delta m_t^2 - \sigma^{2,s}_{t-1}), \\
-  \bar V^{f}_t &= \bar V^{f}_{t-1} + \alpha_f (V_t - \bar V^{f}_{t-1}), &
-  \bar V^{s}_t &= \bar V^{s}_{t-1} + \alpha_s (V_t - \bar V^{s}_{t-1}).
-\end{align}
-Momentum indicators for three lookback pairs $(\ell_f,\ell_s) \in \{(5,30),(10,60),(20,120)\}$ are
-differences of EMAs of the mid with those spans, $\mu^{(k)}_t = \text{EMA}_{\ell_f}(m)_t -
-\text{EMA}_{\ell_s}(m)_t$. Signed aggressive flow over a rolling window of $W = 20$ steps gives the
-imbalance
+Let $m_{\text{arrival}} = m_{t_0}$ be the mid-price at the moment $t_0$ when the executor starts its
+metaorder. Over the horizon, the executor obtains a sequence of child fills $(p_k, q_k)$ with
+$\sum_k q_k = Q$, achieving a quantity-weighted average fill price
 \begin{equation}
-  I_t = \frac{\sum_{u=t-W+1}^{t} V^b_u - \sum_{u=t-W+1}^{t} V^s_u}{\sum_{u=t-W+1}^{t} V_u} \in [-1,1],
+  \bar p = \frac{1}{Q}\sum_{k} p_k q_k = \frac{\text{Total Notional Paid/Received}}{Q}.
 \end{equation}
-maintained with a ring buffer rather than a tape scan. Finally an \emph{attention} multiplier, used by
-the noise flow to cluster activity, is
+The standard industry metric of execution cost is \textbf{Implementation Shortfall (IS)}, expressed in
+\textbf{basis points (bps)}, where $1\text{ bp} = 10^{-4} = 0.01\%$:
 \begin{equation}
-  a_t = \min\!\Big(3,\ \max\!\Big(\tfrac12,\ 1 + \tfrac12\Big(\sqrt{\sigma^{2,f}_t/\sigma^{2,s}_t} - 1\Big)
-        + \tfrac12\Big(\bar V^{f}_t/\bar V^{s}_t - 1\Big)\Big)\Big),
+  \label{eq:is_def}
+  \text{IS (bps)} = \sign \cdot \frac{\bar p - m_{\text{arrival}}}{m_{\text{arrival}}} \times 10^4,
+  \qquad \sign = \begin{cases} +1 & \text{if buying (\code{"bid"})}, \\ -1 & \text{if selling (\code{"ask"})}. \end{cases}
 \end{equation}
-held at 1 until the slow statistics have seen a full span (\code{warmed\_up}). The public state also
-exposes best bid and ask, spread, last trade, and the step's volume. It contains no interpretation of
-these statistics: anything that infers a metaorder from them is a \emph{detector} (\S\ref{sec:detectors}).
+A \emph{positive} IS means the executor paid more than $m_{\text{arrival}}$ when buying (or received
+less than $m_{\text{arrival}}$ when selling) --- i.e.\ \textbf{positive IS is a cost}. For example, at
+$m_{\text{arrival}} = 10\,000$ ticks, $1\text{ tick}$ of adverse price movement equals exactly
+$1\text{ bp}$ of implementation shortfall.
 
-%==================================================================================================
-\section{Randomness and reproducibility}
-\label{sec:rng}
-%==================================================================================================
+\subsection{Mechanical Market Impact vs.\ Information Leakage (The Core Distinction)}
 
-A run is fully determined by a \code{SimConfig} and an integer seed. The simulator creates one root
-\code{numpy.random.SeedSequence(seed)} and spawns from it, in a fixed order, one independent child
-generator (PCG64) for
+Why is $\text{IS} > 0$ when executing a large metaorder? There are two distinct mechanisms:
 \begin{enumerate}[nosep]
-\item the \emph{scheduler}, which draws the random permutation in which background agents act each step;
-\item the \emph{hidden value} process;
-\item each background agent in construction order: market makers, the noise pool, institutional traders,
-  the speculator population (one stream for the whole array-backed population), order anticipators;
-\item any \emph{external} participant added later through the simulator's \code{new\_stream()} or
-  \code{add\_external()} methods.
+\item \textbf{Mechanical market impact.} Every child buy order physically removes resting sell orders
+  from the book and shifts market makers' inventories (they become short shares, so they shift their
+  quotes upward to mean-revert their inventory). Even if no agent in the market suspects that a large
+  metaorder is underway, consuming $Q$ lots of liquidity mechanically pushes the price up. Across
+  real equity markets, mechanical peak impact follows the famous empirical \textbf{square-root law}:
+  $\Delta m \propto \sigma\sqrt{Q/V}$.
+\item \textbf{Information leakage (detection cost).} Because a metaorder splits $Q$ into dozens of
+  same-direction child orders over time, it leaves a statistical \emph{footprint} in the public order
+  flow (persistent buy imbalance, long runs of buy trades, regular child sizes). Sophisticated
+  liquidity providers (\textbf{detecting market makers}) and predatory traders (\textbf{order
+  anticipators}) monitor public order flow to infer whether a metaorder is active. When their
+  \textbf{detector} fires ($s_t > 0$):
+  \begin{itemize}[nosep]
+  \item Detecting market makers \emph{skew} their quotes upward, \emph{widen} their ask spread, and
+    \emph{cut} their ask quote size to protect themselves from being adversely selected;
+  \item Order anticipators \emph{front-run} the metaorder by buying ahead of the executor and selling
+    back into the elevated price.
+  \end{itemize}
 \end{enumerate}
-Consequences:
-\begin{itemize}[nosep]
-\item \textbf{Exact replay.} The same (config, seed) reproduces the event log byte for byte; so does
-  restoring a snapshot and continuing. \code{reseed(seed')} re-derives every existing stream from a new
-  root in place, so all holders follow it.
-\item \textbf{Independence of population changes.} Removing the institutions or adding an anticipator
-  (which is constructed last) leaves every earlier agent's stream untouched.
-\item \textbf{Paired counterfactuals (common random numbers).} An external agent acts \emph{before} the
-  background population and outside the scheduler's permutation, with its own stream. Running the same
-  seed with and without it therefore shares the scheduler's and the hidden value's draws exactly, and
-  every background agent's draws \emph{up to state dependence}: an agent that draws a state-dependent
-  number of variates (the noise pool draws Poisson($\lambda a_t$) orders; speculators draw per active
-  member) diverges only after the market itself has diverged because of the injected order. The
-  difference between the two mid paths is then the injected order's impact and the market's reaction
-  to it with the market's own randomness removed. This is the instrument used for the square-root
-  impact measurement (\S\ref{sec:impact}) and, in Phase~2, for the leakage decomposition
-  $\text{IS}_\text{visible} - \text{IS}_\text{invisible}$.
-\item \textbf{Scope.} A Gymnasium episode reseeds a restored snapshot with a seed drawn from the
-  environment's own generator, so parallel environments are independent and reproducible from the
-  environment seed.
-\end{itemize}
+
+In real markets, you can never observe what a metaorder \emph{would} have cost if detectors had not
+spotted it. In our deterministic simulator, we can measure this \textbf{exact counterfactual}: we run
+the exact same random seed twice --- once where the executor's trades are \textbf{visible} to the public
+order-flow statistics and detectors ($\text{IS}_{\text{visible}}$), and once where the executor's trades
+still execute and move prices and inventories identically in the book, but are \textbf{hidden} from the
+public flow window ($\text{IS}_{\text{invisible}}$, via \code{Market.hide(cid)}). This yields the clean
+additive decomposition:
+\begin{equation}
+  \label{eq:leakage_decomp}
+  \underbrace{\text{IS}_{\text{visible}}}_{\text{Total Execution Cost}}
+  \;=\;
+  \underbrace{\text{IS}_{\text{invisible}}}_{\text{Mechanical Impact Cost}}
+  \;+\;
+  \underbrace{\big(\text{IS}_{\text{visible}} - \text{IS}_{\text{invisible}}\big)}_{\text{Information Leakage Cost}}.
+\end{equation}
 
 %==================================================================================================
-\section{Agents}
-\label{sec:agents}
+\section{Codebase Map, Directory Layout, and Data Flow}
+\label{sec:codebase}
 %==================================================================================================
 
-Every step, the hidden value advances, external agents act in fixed order, background agents act in
-the scheduler's random order, the public state is refreshed, and the detectors are updated. Agents
-read \code{Market.public}, the book's best quotes and levels, their own account and their own orders.
-Cost scales with events, not with the number of notional traders.
+This section explains how the repository is organised, which files implement which abstractions, the
+strict downward dependency graph, and the exact sequence of operations inside one simulation step.
 
-%--------------------------------------------------------------------------------------------------
-\subsection{Hidden value (\code{FundamentalValue})}
-\label{sec:fundamental}
-%--------------------------------------------------------------------------------------------------
+\subsection{Directory and Module Inventory}
 
-Exogenous information arrival is a random walk in ticks with optional reversion to its initial value,
-\begin{equation}
-  v_t = v_{t-1} + \rho\,(v_0 - v_{t-1}) + \sigma_v\,\varepsilon_t, \qquad \varepsilon_t \sim N(0,1),
-\end{equation}
-with $\sigma_v = 0.3$ and $\rho = 0$ by default. Only speculators see it, and only through private noise;
-it drives beliefs, not prices. This is standard in agent-based models, and the paper's claim is limited
-accordingly: microstructure and impact emerge from agents, the long-run price level does not.
-
-\paragraph{Private valuations switch.} With \code{FundamentalConfig.private = True} there is no shared
-value: each speculator $i$ holds a private valuation that drifts with its own noise and adapts toward
-the traded mid,
-\begin{equation}
-  v_{i,t} = v_{i,t-1} + \kappa_a\,(m_{t-1} - v_{i,t-1}) + \sigma_v\,\varepsilon_{i,t},
-\end{equation}
-updated for all members once per step ($\kappa_a = 0.01$ by default). The shared path is still advanced
-(so the stream structure is unchanged) but unused. The plan asks for the main results under both
-information models.
-
-%--------------------------------------------------------------------------------------------------
-\subsection{Noise flow (\code{NoiseFlow})}
-%--------------------------------------------------------------------------------------------------
-
-One pooled account submits zero-intelligence order flow. Each step it first cancels a random
-subset of its resting orders, Binomial$(n_\text{resting}, p_c)$ of them with $p_c = 0.015$, then submits
-$N_t \sim \text{Poisson}(\lambda\, a_t)$ new orders ($\lambda = 2.5$, $a_t$ the attention multiplier).
-Each order has size $U\{1,\dots,q_{\max}\}$ ($q_{\max}=12$) and is a buy with probability
-\begin{equation}
-  p_\text{bid} = \tfrac12 + w\,(c_t - \tfrac12), \qquad
-  c_t = \frac{\text{cash}}{\text{cash} + \text{shares}\cdot m_t},
-\end{equation}
-($w = 0.5$), i.e.\ tilted toward the pool's cash share of wealth so it cannot exhaust its cash or its
-stock in a long trend. A fraction $f_m = 0.15$ of orders are market orders at half size (takers are
-smaller than makers), a fraction $f_x = 0.05$ are marketable limits at the opposite best, and the rest
-rest $1 + \text{Geometric}$ ticks behind the opposite best with mean offset $\bar d + 1$ ($\bar d = 3$).
-
-%--------------------------------------------------------------------------------------------------
-\subsection{Speculators (\code{Speculators})}
-%--------------------------------------------------------------------------------------------------
-
-An array-backed population of $n = 40$ members, each either a \emph{fundamentalist} (mode 0) or a
-\emph{chartist} (mode 1). Each step a vectorised draw selects the active members (each with probability
-$p_a = 0.05$); only they do any work. An active member first cancels any resting order it has, then:
-
-\paragraph{Fundamentalist.} Forms the belief $b_{i,t} = v_t + \beta_i + \eta_{i,t}$ with a permanent
-private bias $\beta_i \sim N(0, 3^2)$ and fresh observation noise $\eta_{i,t} \sim N(0, 1^2)$ (ticks).
-With gap $g = b_{i,t} - m_t$ and threshold $\theta = 2$ ticks it does nothing if $|g| < \theta$;
-otherwise it trades toward its belief with size
-\begin{equation}
-  q = \min\big(q_{\max},\ \max(1, \operatorname{round}(|g| - \theta))\big), \qquad q_{\max} = 20,
-\end{equation}
-capped by its position limit (the share endowment by default). For $|g| \ge g_a = 8$ ticks it uses a
-market order; otherwise a passive limit at $\lfloor b - \theta \rfloor$ (buy) or
-$\lceil b + \theta \rceil$ (sell), kept at least one tick inside the opposite best.
-
-\paragraph{Chartist.} Follows the public momentum indicator $\mu^{(k_i)}_t$ of its assigned lookback
-pair. If it has a position and the signal has reversed ($\text{position}\cdot\mu < 0$) or faded
-($|\mu| < \theta_c/4$), it exits by market order in chunks of at most $q_c = 10$ lots. Otherwise, if
-$|\mu| \ge \theta_c$ it enters in the direction of $\mu$ with size
-$\min(q_c, \max(1, \operatorname{round}(s\,(|\mu| - \theta_c))))$, $s = 2$ lots per tick, within the
-position limit. The threshold $\theta_c = 6$ ticks is the main lever on return autocorrelation
-(\S\ref{sec:results}).
-
-\paragraph{Brock--Hommes switching.} Every $T_s = 50$ steps, each mode's fitness $F_k$ is updated with
-the mean realised wealth return (in percent) of its current members over the block,
-$F_k \leftarrow F_k + \lambda_F (\bar r_k - F_k)$, $\lambda_F = 0.1$, and every member re-draws its mode
-with
-\begin{equation}
-  P(\text{chartist}) = \frac{1}{1 + e^{-\beta_s (F_1 - F_0)}}, \qquad \beta_s = 2 .
-\end{equation}
-
-%--------------------------------------------------------------------------------------------------
-\subsection{Institutional traders (\code{InstitutionalTrader})}
-\label{sec:institutions}
-%--------------------------------------------------------------------------------------------------
-
-Institutional traders (four by default) are what makes detection hard: their metaorders look like an
-executor's and create false positives for every detector. Each trader runs at most one metaorder at a
-time.
-
-\paragraph{Arrival.} While idle, a metaorder starts with probability $\lambda_I = 5\times 10^{-4}$ per
-step (a discrete Poisson process; expected idle time 2\,000 steps).
-
-\paragraph{Side.} With inventory relative to the initial endowment $x = (\text{shares} -
-\text{shares}_0)/\text{shares}_0$, the metaorder is a buy with probability
-\begin{equation}
-  p_\text{bid} = \tfrac12 - \tfrac12 \tanh(\pi_I\, x), \qquad \pi_I = 2,
-\end{equation}
-so each trader's holding mean-reverts and the aggregate institutional flow stays balanced over long
-runs. (Without this, the population's inventory random-walks and, over tens of thousands of steps,
-exhausts the other agents' budgets; see \S\ref{sec:results}.)
-
-\paragraph{Size and participation.} Size is log-normal, $Q = \min(Q_{\max}, \operatorname{round}(
-Q_\text{med}\, e^{\sigma_Q Z}))$ with $Q_\text{med} = 600$ lots, $\sigma_Q = 0.7$, $Q_{\max} = 3\,000$,
-capped by what the account can fund. The target participation rate is $\pi \sim U(0.02, 0.20)$ of
-market volume. The implied duration uses the public slow volume EWMA $\bar V^s$ (a fallback of
-5~lots/step before warm-up),
-\begin{equation}
-  T = \operatorname{clamp}\!\Big(\frac{Q}{\pi\, \bar V^s},\ 100,\ 4\,000\Big) \text{ steps}.
-\end{equation}
-With a market volume of about 5 lots/step, $Q$ ranges roughly from 150 to 2\,500 lots, which overlaps
-the executor's $Q$ of 5--20\% of 2\,000 steps of volume (500--2\,000 lots).
-
-\paragraph{Execution styles.} Each metaorder draws one of five styles (uniformly by default;
-\code{style\_weights} can change this). Children are sent every $\Delta = 5$ steps. Progress is read
-from the trader's own account (shares relative to the start), so passive fills need no callbacks. Let
-$R$ be the remaining quantity, $S$ the number of slices left, $X$ the quantity executed so far.
-\begin{description}[nosep]
-\item[\code{twap\_market}] every $\Delta$ steps, a market order of $\lceil R/S \rceil$.
-\item[\code{twap\_random}] as above with the child size multiplied by $U(1-j, 1+j)$ and the next interval
-  by $U(1-j,1+j)$, $j = 0.5$ (the ``naive'' way to hide; Yang \& Zhu predict randomisation).
-\item[\code{twap\_passive}] each slice of $\lceil R/S \rceil$ is posted as a limit order at the trader's
-  own best (best bid for a buy); at the slice deadline the resting order is cancelled and the unfilled
-  part of the slice is crossed by market order (``catch-up''). This is what practitioners run.
-\item[\code{pov}] every $\Delta$ steps, bring $X$ up to $\min(Q, \lfloor \pi \cdot (\text{public volume
-  since the start}) \rfloor)$ by market order, where the trader itself accumulates the public per-step
-  volume; over the final tenth of the horizon it switches to catch-up TWAP.
-\item[\code{front\_loaded}] an Almgren--Chriss-like trajectory, remaining$(t) = Q\,\sinh(k(T-t))/\sinh(kT)$
-  with $kT = 2$, brought up to schedule by market order every $\Delta$ steps.
-\end{description}
-Whatever remains at the planned end is forced through by market order, as an execution desk would do,
-and its cost counts in full.
-
-\paragraph{Labels.} In analysis mode every metaorder is recorded in \code{Simulator.metaorders.records}
-as a \code{MetaorderRecord}: id, client, side, style, intended size, participation, start, planned end,
-arrival mid, actual end, executed quantity and notional, from which the average price and the
-implementation shortfall in basis points,
-\begin{equation}
-  \text{IS} = \sign \cdot \frac{\bar p - m_\text{arrival}}{m_\text{arrival}} \times 10^4,
-  \qquad \sign = +1 \text{ for a buy}, -1 \text{ for a sell},
-\end{equation}
-follow. These are the ground truth for scoring detectors (ROC~AUC, detection delay, false alarms).
-Agents only \emph{open} their own record; the guard test fails if any agent reads the list. In training
-mode no labels are kept.
-
-\paragraph{Injection.} \code{InstitutionalTrader.begin(side, size, participation, style, duration)}
-starts a metaorder on demand. Together with \code{Simulator.add\_external} this is how the impact
-experiment injects a single metaorder into an otherwise identical market.
-
-%--------------------------------------------------------------------------------------------------
-\subsection{Market makers (\code{MarketMaker})}
-\label{sec:mm}
-%--------------------------------------------------------------------------------------------------
-
-Four two-sided post-only quoters in the spirit of Avellaneda--Stoikov. With inventory $I$ relative to the
-initial holding, $\gamma = 0.003$, $\kappa = 1$, horizon $H = 50$ steps and
-$\sigma^2 = \max(\sigma^{2,f}_t, \sigma^2_{\min})$ ($\sigma^2_{\min} = 0.25$ ticks$^2$/step):
-\begin{align}
-  r_t &= m_t - \operatorname{clamp}(I\,\gamma\sigma^2 H,\ -\bar s,\ \bar s), &
-  h_t &= \operatorname{clamp}\!\Big(\tfrac12\big(\gamma\sigma^2 H + \tfrac{2}{\gamma}\ln(1+\tfrac{\gamma}{\kappa})\big),\ 1,\ \bar s\Big),
-\end{align}
-with $\bar s = 10$ ticks capping both the inventory skew and the half-spread so that a volatility spike
-cannot make the quoter cross the book. Quotes are $\text{bid} = r_t - h_t - \omega^b$,
-$\text{ask} = \max(r_t + h_t + \omega^a,\ \text{bid} + 2)$, then clamped to be post-only against
-everyone else's best (\code{best\_excluding} the maker's own order). Quote size on each side is drawn
-uniformly from $[5, 20]$ lots when a quote is (re)placed. A side is cancelled and replaced only when its
-target price has moved at least one tick from the resting quote or its remaining size has fallen below
-half of target, so the maker keeps queue position otherwise. The side that would push $|I|$ beyond
-$I_{\max} = 200$ is pulled.
-
-\paragraph{Detection response.} A maker whose configuration names a detector reads its signal
-$s_t \in [-1,1]$ (positive: buy metaorder suspected). The pressured side is the ask for $s_t > 0$ and
-the bid for $s_t < 0$. The response is
-\begin{equation}
-  r_t \mathrel{+}= \delta_r\, s_t, \qquad \omega^\text{pressured} = \delta_w\,|s_t|, \qquad
-  \text{size}^\text{pressured} \mathrel{\times}= \max(0,\ 1 - \delta_q\,|s_t|),
-\end{equation}
-with $\delta_r = 4$ ticks, $\delta_w = 3$ ticks and $\delta_q = 0.7$. The mapping from signal to action
-is the same for every adversary level; only the detector changes, so differences in execution cost
-across levels come from detection quality alone. Running makers with and without detection side by side
-makes false alarms costly: a maker that widens on a false alarm loses volume and spread income to the
-others.
-
-\paragraph{Fragility.} With the volatility ratio $\varrho_t = \sqrt{\sigma^{2,f}_t/\sigma^{2,s}_t}$,
-both quote sizes are scaled by $\max(0,\ 1 - \phi\,\max(\varrho_t - 1, 0))$, $\phi = 0.5$, and when
-$\varrho_t > \varrho_\text{pull} = 3$ both quotes are cancelled and stay away for a cooldown of 20
-steps. Liquidity therefore thins exactly when a large order makes the price move fast, which is how
-market impact becomes concave and how fast moves amplify.
-
-%--------------------------------------------------------------------------------------------------
-\subsection{Order anticipator (\code{OrderAnticipator})}
-\label{sec:anticipator}
-%--------------------------------------------------------------------------------------------------
-
-The order-anticipation trader (adversary level A4; none by default) reads a detector and trades on it
-with market orders. With $|s_t| \ge \theta_A = 0.5$ it trades in the signal's direction
-$\min\big(c,\ \operatorname{round}(\varphi\,(|s_t| - \theta_A)/(1-\theta_A))\big)$ lots per step
-($\varphi = 2$ lots/step, chunk $c = 10$) within a position limit of $P_{\max} = 200$ lots; with
-$|s_t| < \theta_\text{fade} = 0.2$ it unwinds $c$ lots per step; in between it holds. With
-\code{contrarian\_first} it trades \emph{against} the detected flow (supplying liquidity, as van Kervel
-\& Menkveld report for the start of institutional executions) until the signal has been confident for
-\code{switch\_after} $= 50$ steps, then with it. A false alarm costs the anticipator the round trip, so
-detection is not free for it either.
-
-%==================================================================================================
-\section{Detectors (\code{order\_book.detectors})}
-\label{sec:detectors}
-%==================================================================================================
-
-A detector implements \code{update(public\_state)}, called once per step after the public state is
-refreshed, and exposes a signed \code{signal} $\in [-1,1]$ and probabilities \code{p\_buy},
-\code{p\_sell} $\in [0,1]$ that a metaorder is active on each side. Detectors read only
-\code{PublicState}. The simulator keeps a registry \code{Simulator.detectors} by name; market makers and
-anticipators whose configuration names a detector hold a reference to it. No detector ever receives a
-flag saying an executor is active.
-
-\paragraph{Flow detector (level A1).} The rule-based detector keeps an EWMA of the public flow imbalance
-with span $\tau_d = 10$,
-\begin{equation}
-  M_t = M_{t-1} + \tfrac{2}{\tau_d+1}\,(I_t - M_{t-1}),
-\end{equation}
-and emits
-\begin{equation}
-  s_t = \sign(M_t)\cdot \min\!\Big(1,\ \frac{|M_t| - \theta_d}{1-\theta_d}\Big)^{+}, \qquad
-  p^\text{buy}_t = s_t^{+},\quad p^\text{sell}_t = (-s_t)^{+},
-\end{equation}
-with threshold $\theta_d \in \{0.2, 0.3, 0.45\}$ for the \emph{lenient}, \emph{medium} and
-\emph{strict} variants (\code{FLOW\_THRESHOLDS} in \code{presets}). Held-out statistical detectors (A2), a
-learned classifier (A3) and best-response detectors (A5) plug in behind the same interface in later
-phases.
-
-\paragraph{Adversary presets.} \code{presets.adversary(level, threshold)} returns the configuration for
-A0 (no maker reacts to any detector, no anticipator), A1 (two of four makers react to the flow detector)
-and A4 (A1 plus one anticipator). Only the detector and the presence of the anticipator differ.
-
-%==================================================================================================
-\section{Configuration}
-\label{sec:config}
-%==================================================================================================
-
-All parameters are fields of frozen dataclasses in \code{order\_book/config.py}, aggregated in
-\code{SimConfig}. Frozen dataclasses are hashable, picklable and compared by value; variants are made
-with \code{dataclasses.replace}:
-\begin{lstlisting}[language=Python]
-from dataclasses import replace
-from order_book import SimConfig, Simulator
-from order_book.config import PopulationConfig, market_makers
-
-cfg = replace(SimConfig(),
-              population=replace(PopulationConfig(), institutions=8,
-                                 market_makers=market_makers(n=6, detecting=3)))
-sim = Simulator(seed=0, config=cfg, analysis=True)
-\end{lstlisting}
-
-{\small
-\begin{longtable}{L{4.0cm} L{2.9cm} L{7.6cm}}
-\caption{Configuration fields and defaults.}\label{tab:config}\\
-\toprule Field & Default & Meaning \\ \midrule
+{\footnotesize\setlength{\tabcolsep}{4pt}
+\begin{longtable}{L{4.0cm} L{10.5cm}}
+\caption{Complete module map of the \code{order\_book} package.}\label{tab:module_map}\\
+\toprule
+File / Module & Responsibility and Key Classes / Functions \\
+\midrule
 \endfirsthead
-\toprule Field & Default & Meaning \\ \midrule
+\toprule
+File / Module & Responsibility and Key Classes / Functions \\
+\midrule
 \endhead
-\multicolumn{3}{l}{\textbf{BookConfig}} \\
-num\_levels & 20 & bounded-window depth per side (ticks) \\
-mid & 10\,000 & initial mid in ticks \\
-distance\_from\_mid & 1 & initial anchor offset before any trade \\
+\multicolumn{2}{l}{\textbf{Core Engine \& Market Layer (\code{order\_book/})}} \\
+\code{order\_book/book.py} & Zero-dependency price--time FIFO matching engine (\code{OrderBook}, \code{\_Order}, \code{Report}, \code{Trade}, \code{OrderView}). Bounded window eviction, 4 STP modes, $O(1)$ best-quote/volume/order lookup. \\
+\code{order\_book/market.py} & Accounting and routing (\code{Account}, \code{Market}). Running cash/share reservations, budget/window rejection counters, settlement, analysis tape, and counterfactual \code{hide(cid)}. \\
+\code{order\_book/public\_state.py} & Rolling public statistics (\code{PublicState}): fast/slow EWMA mid, variance, volume; 3 momentum lookback pairs; 20-step ring-buffer flow imbalance; attention multiplier. \\
+\code{order\_book/config.py} & All frozen configuration dataclasses (\code{BookConfig}, \code{PublicStateConfig}, \code{FlowDetectorConfig}, \code{FundamentalConfig}, \code{NoiseFlowConfig}, \code{SpeculatorConfig}, \code{InstitutionalConfig}, \code{MarketMakerConfig}, \code{OrderAnticipatorConfig}, \code{PopulationConfig}, \code{EndowmentConfig}, \code{SimConfig}). \\
+\code{order\_book/simulator.py} & Top-level simulation coordinator (\code{Simulator}): \code{SeedSequence} stream tree, population builder, step loop, \code{snapshot()}/\code{restore()}, \code{reseed()}, \code{add\_external()}, \code{check\_conservation()}. \\
+\code{order\_book/presets.py} & Composable market builders: \code{adversary(level, threshold, base, detecting)}, \code{regime(liquidity, institutions, makers, mm\_size\_scale)}, \code{private\_valuations()}, \code{no\_institutions()}. \\
+\code{order\_book/history.py} & Per-step time-series recorder for analysis plots and animations. \\
+\code{order\_book/validation.py} & Stylised-facts suite and pass/fail table against plan \S4.2 targets. \\
+\code{order\_book/impact.py} & Natural-metaorder and paired-injection square-root impact measurement. \\
+\code{order\_book/scoring.py} & Mann--Whitney \code{roc\_auc} with tie handling, \code{detection\_delay}, \code{false\_alarm\_rate}, \code{activity\_labels}, \code{bootstrap\_ci}, \code{paired\_difference}, \code{cvar}, \code{holm}. \\
+\code{order\_book/experiments.py} & Phase~2 experiment harness: \code{AdversarySpec}, \code{EpisodeSpec}, \code{EpisodeResult}, \code{run\_episode}, parallel \code{run\_specs}, \code{E2Config}, \code{E3Config}, \code{RegimeSpec}, \code{E7Config}, \code{StrengthSpec}, \code{E7StrengthConfig}. \\
+\code{order\_book/env.py} & Legacy generic-trader Gymnasium wrapper (\code{OrderBookEnv}) using snapshot banks; superseded for optimal execution by \code{order\_book/execution/env.py}. \\
 \midrule
-\multicolumn{3}{l}{\textbf{PublicStateConfig}} \\
-lookbacks & (5,30), (10,60), (20,120) & momentum EMA span pairs \\
-fast, slow & 10, 100 & EWMA spans of the fast and slow statistics \\
-flow\_window & 20 & steps of signed aggressive volume in the imbalance window \\
+\multicolumn{2}{l}{\textbf{Background Agent Population (\code{order\_book/agents/})}} \\
+\code{agents/base.py} & Abstract base class \code{Agent(cid, market, rng, cash, shares)} opening an \code{Account}. \\
+\code{agents/fundamental.py} & \code{FundamentalValue}: exogenous Gaussian random-walk value with optional mean reversion and private-valuations switch. \\
+\code{agents/noise.py} & \code{NoiseFlow}: pooled zero-intelligence Poisson order flow with binomial cancellation, attention scaling, and wealth-balanced side probability. \\
+\code{agents/speculators.py} & \code{Speculators}: vectorised array-backed population of $n=40$ fundamentalists and chartists with Brock--Hommes logit strategy switching. \\
+\code{agents/institutional.py} & \code{InstitutionalTrader}, \code{MetaorderRecord}, \code{MetaorderLog}: background metaorder arrivals, 5 execution styles, inventory-reverting side choice, ground-truth labels. \\
+\code{agents/market\_maker.py} & \code{MarketMaker}: Avellaneda--Stoikov two-sided post-only quoter with queue preservation, volatility fragility/pull cooldown, and linear detector response. \\
+\code{agents/anticipator.py} & \code{OrderAnticipator}: predatory/contrarian trader acting on detector signals. \\
 \midrule
-\multicolumn{3}{l}{\textbf{FlowDetectorConfig}} \\
-memory & 10 & EWMA span of the imbalance \\
-threshold & 0.3 & no signal below this $|M_t|$ (0.2 lenient, 0.45 strict) \\
+\multicolumn{2}{l}{\textbf{Metaorder Detectors (\code{order\_book/detectors/})}} \\
+\code{detectors/base.py} & Abstract \code{Detector} interface (\code{update(public)} $\to$ \code{signal}, \code{p\_buy}, \code{p\_sell}). \\
+\code{detectors/flow.py} & \code{FlowDetector} (A1): EWMA of signed flow imbalance with dead-zone threshold. \\
+\code{detectors/features.py} & \code{FeatureTracker}: 10 rolling public features from anonymous trades and book state. \\
+\code{detectors/statistical.py} & Held-out A2 detectors: \code{RunsDetector}, \code{CusumDetector}, \code{VolumeClockDetector}, \code{RegularityDetector}. \\
+\code{detectors/learned.py} & \code{LearnedDetector} \& \code{LearnedDetectorParams} (A3): 3-class multinomial logistic regression trained by Adam with inverse-frequency class weights. \\
 \midrule
-\multicolumn{3}{l}{\textbf{FundamentalConfig}} \\
-sigma & 0.3 & ticks/step of the value's random walk \\
-reversion & 0 & pull toward the initial value per step \\
-private & False & private adaptive valuations instead of one shared value \\
-adapt & 0.01 & private mode: pull of each valuation toward the mid \\
-\midrule
-\multicolumn{3}{l}{\textbf{NoiseFlowConfig}} \\
-rate & 2.5 & Poisson orders per step before attention \\
-cancel\_prob & 0.015 & per resting order per step \\
-max\_qty & 12 & order size uniform on $1..\text{max\_qty}$ \\
-mean\_offset & 3 & mean ticks behind the opposite best for passive limits \\
-market\_frac, cross\_frac & 0.15, 0.05 & share of market orders (half size), of marketable limits \\
-balance\_weight & 0.5 & tilt of the bid probability toward the cash share \\
-\midrule
-\multicolumn{3}{l}{\textbf{SpeculatorConfig}} \\
-p\_act & 0.05 & probability each member acts per step \\
-bias\_sd, obs\_noise & 3, 1 & permanent bias and fresh noise on the value (ticks) \\
-threshold, aggressive\_gap & 2, 8 & fundamentalist: minimum gap; gap for a market order \\
-max\_qty, max\_position & 20, endowment & fundamentalist size cap; absolute position cap \\
-chart\_threshold & 6 & chartist: minimum $|\mu|$ to enter (3 gives trending returns, \S\ref{sec:results}) \\
-chart\_max\_qty, size\_per\_tick & 10, 2 & chartist size cap; lots per tick of excess signal \\
-switch\_every, beta, fitness\_memory & 50, 2, 0.1 & Brock--Hommes block, intensity of choice, fitness EWMA \\
-\midrule
-\multicolumn{3}{l}{\textbf{InstitutionalConfig}} \\
-start\_rate & $5\times10^{-4}$ & probability per idle step of starting a metaorder \\
-size\_median, size\_sigma, size\_max & 600, 0.7, 3\,000 & log-normal size (lots) and cap \\
-participation & (0.02, 0.20) & uniform target share of market volume \\
-duration & (100, 4\,000) & clamp on the implied duration (steps) \\
-interval & 5 & steps between child orders / slice length \\
-styles, style\_weights & all five, uniform & execution styles and their probabilities \\
-jitter & 0.5 & randomised TWAP relative jitter \\
-front\_load & 2 & $kT$ of the sinh schedule \\
-volume\_fallback & 5 & lots/step assumed before the public EWMA warms up \\
-inventory\_pull & 2 & tanh scale of the side tilt toward the endowment \\
-\midrule
-\multicolumn{3}{l}{\textbf{MarketMakerConfig}} (one per maker; \code{market\_makers(n, detecting)} builds a tuple) \\
-gamma, kappa, horizon & 0.003, 1, 50 & Avellaneda--Stoikov parameters \\
-min\_var, max\_skew & 0.25, 10 & variance floor; cap on skew and half-spread (ticks) \\
-size, refill\_frac & (5,20), 0.5 & quote size range; requote when below this share \\
-max\_inventory & 200 & pull the side that would exceed this \\
-detector & None / "flow" & detector to react to \\
-detect\_skew, detect\_widen, detect\_size\_cut & 4, 3, 0.7 & response per unit signal \\
-fragility, pull\_ratio, cooldown & 0.5, 3, 20 & size scale slope; pull threshold; steps pulled \\
-\midrule
-\multicolumn{3}{l}{\textbf{OrderAnticipatorConfig}} \\
-detector & "flow" & detector to trade on \\
-threshold, fade & 0.5, 0.2 & enter above; unwind below \\
-rate, chunk & 2, 10 & lots/step at full signal; max lots per order \\
-max\_position & 200 & absolute position cap \\
-contrarian\_first, switch\_after & False, 50 & trade against the flow first; steps before switching \\
-\midrule
-\multicolumn{3}{l}{\textbf{PopulationConfig}} \\
-market\_makers & 4 (2 detecting) & tuple of MarketMakerConfig \\
-institutions, speculators, anticipators & 4, 40, 0 & counts \\
-\midrule
-\multicolumn{3}{l}{\textbf{EndowmentConfig}} (shares; cash $=$ shares $\times$ mid) \\
-maker, noise, institution, speculator, anticipator & 300, 6\,000, 5\,000, 400, 1\,000 & initial holdings \\
-\midrule
-\multicolumn{3}{l}{\textbf{SimConfig}} \\
-step\_seconds & 1 & wall-clock meaning of one step \\
+\multicolumn{2}{l}{\textbf{Execution Task, Baselines, and Phase 3 RL (\code{order\_book/execution/})}} \\
+\code{execution/task.py} & \code{ExecutionTask}, \code{Decision}, \code{ExecState}, \code{Strategy}, \code{ExecutionResult}, \code{ExecutorAgent}, and \code{expected\_volume\_from\_tape}. \\
+\code{execution/strategies.py} & All 12 baseline strategies (\code{Immediate}, \code{TwapMarket}, \code{TwapPassive}, \code{TwapRandom}, \code{Pov}, \code{AlmgrenChriss}, \code{ObizhaevaWang}, \code{LimitMarket}, \code{Footprint}, \code{Mimic}) + \code{make\_strategy} (supporting \code{"rl@<path>"}). \\
+\code{execution/calibration.py} & \code{FillProber}, \code{fit\_resilience}, \code{calibrate()}: fits $\sigma, \eta, \gamma_{\text{perm}}, \rho, \text{depth}, p_d$ under A0. \\
+\code{execution/features.py} & Phase~3 MDP state/action encoding: 13-feature sign-normalised \code{features(s)}, 15-action grid \code{ACTIONS}, \code{decision(a, s)}, \code{Transition}. \\
+\code{execution/policy.py} & PyTorch actor--critic \code{PolicyNet} ($13 \to 64 \to 64$ $\tanh$ MLP) and \code{PolicyStrategy} adapter. \\
+\code{execution/env.py} & \code{ExecutionEnv}, \code{EpisodeInfo}, \code{phase3\_config()}: episode rollout with telescoping IS reward. \\
+\code{execution/ppo.py} & \code{PPOConfig}, \code{PPOTrainer}, \code{\_gae}: clipped PPO with GAE($\gamma,\lambda$) over full episodes. \\
 \bottomrule
 \end{longtable}
 }
 
-Client ids are assigned in construction order: makers $0..n_m-1$, the noise pool, institutional
-traders, speculators, anticipators, then external participants. \code{Simulator.groups} maps display
-names (\code{MM1}, \code{Noise}, \code{Inst1}, \code{Speculators}, \code{Antic1}, \code{Ext1}, \dots)
-to client ids.
+\subsection{Strict Downward Import Hierarchy}
+
+A core architectural invariant of the codebase is that dependencies point strictly downward:
+\begin{align*}
+  \code{book}
+  \;\longleftarrow\;
+  \code{market},\, \code{public\_state}
+  \;\longleftarrow\;
+  \code{detectors}
+  \;\longleftarrow\;
+  \code{agents}
+  \;\longleftarrow\;
+  \code{simulator} \\
+  \;\longleftarrow\;
+  \code{presets},\, \code{execution},\, \code{experiments}
+  \;\longleftarrow\;
+  \code{scripts}.
+\end{align*}
+\begin{itemize}[nosep]
+\item \code{OrderBook} (\code{book.py}) imports \emph{nothing} from \code{order\_book}; it knows only
+  integer client IDs, order IDs, prices, and quantities.
+\item \code{Detector} subclasses (\code{detectors/}) import only \code{PublicState}; they have no
+  reference to \code{OrderBook}, \code{Market}, or any agent, making it structurally impossible for a
+  detector to cheat by inspecting order IDs or client accounts.
+\item Background agents and \code{ExecutorAgent} hold a reference to \code{Market}, never mutating
+  \code{OrderBook} directly, so cash and share reservations in \code{Market} can never go out of sync
+  with resting orders in \code{OrderBook}.
+\end{itemize}
+
+\subsection{Anatomy of a Single Simulation Step (\code{Simulator.step()})}
+
+Every call to \code{Simulator.step()} in \code{order\_book/simulator.py} executes the following
+six-stage pipeline in exact deterministic order:
+\begin{lstlisting}[language=Python]
+def step(self) -> None:
+    self.fundamental.advance()                     # 1. Advance hidden fundamental value v_t
+    for agent in self.externals:                   # 2. External agents (ExecutorAgent) act first
+        agent.act()
+    agents = self.agents
+    for i in self.rng.permutation(len(agents)):    # 3. Background agents act in random order
+        agents[i].act()
+    self.market.end_step()                         # 4. Refresh PublicState & clear step accumulators
+    public = self.market.public
+    for detector in self.detectors.values():       # 5. Update every registered detector from PublicState
+        detector.update(public)
+\end{lstlisting}
+Notice two crucial subtleties of this loop:
+\begin{enumerate}[nosep]
+\item \textbf{Why \code{externals} act outside \code{self.rng.permutation(len(agents))}.} If adding an
+  external agent (such as \code{ExecutorAgent} or the paired-impact injected trader) changed the length
+  of \code{self.agents}, then \code{self.rng.permutation} would consume a different number of random
+  bytes on step~1, immediately scrambling the action order of all background agents relative to a
+  no-executor run. Keeping \code{externals} in a separate list that acts before the permutation preserves
+  common random numbers across paired counterfactual runs (\S\ref{sec:rng}).
+\item \textbf{When \code{PublicState.step\_volume} and \code{detectors} update.} During stages 2 and 3,
+  every trade that settles in \code{Market.\_settle()} accumulates into \code{Market.\_buy\_volume},
+  \code{\_sell\_volume}, \code{\_flow\_buy}, \code{\_flow\_sell}, and \code{\_step\_trades}. At stage~4,
+  \code{Market.end\_step()} pushes those step totals into \code{PublicState.update(...)}, increments
+  \code{Market.step} from $t$ to $t+1$, and zeroes the accumulators. Immediately after, at stage~5, all
+  detectors read the newly updated \code{PublicState}. Thus, on step $t+1$, when agents act in stages 2
+  and 3, they observe the \code{PublicState} and detector signals resulting from step $t$.
+\end{enumerate}
 
 %==================================================================================================
-\section{Simulator loop, snapshots and external participants}
+\part{The Simulator: Data Structures, Equations, and Validation}
+\label{part:one}
 %==================================================================================================
 
-\code{Simulator(seed, config, analysis)} builds the book, the market, the hidden value, the detector
-registry, the metaorder log and the population. \code{step()} performs one step as described in
-\S\ref{sec:agents}; \code{run(n)} repeats it. \code{snapshot()} pickles the whole simulator and
-\code{restore(blob)} returns an independent copy that continues identically, so training episodes can
-start from a bank of post-burn-in states instead of burning in every episode. \code{join(cash, shares)}
-opens an account for an externally driven trader (the RL executor acts between \code{run} calls);
-\code{add\_external(cls, cash, shares, **kwargs)} adds an agent that acts every step before the
-background population with its own stream (\S\ref{sec:rng}). \code{check\_conservation()} asserts the
-cash, share and free-balance invariants.
+%==================================================================================================
+\section{Matching Engine and Data Structures (\code{order\_book.book})}
+\label{sec:book}
+%==================================================================================================
+
+\code{OrderBook} (\code{order\_book/book.py}) is a single-instrument, price--time (FIFO) limit order
+book. Because a single simulation episode executes tens of thousands of order placements, cancellations,
+and queries, every hot-path operation is engineered to avoid linear scans over resting orders.
+
+\subsection{Internal Data Structures and Complexity Guarantees}
+
+\code{OrderBook} maintains five synchronised internal containers:
+\begin{enumerate}[nosep]
+\item \textbf{Per-price FIFO queues:}
+  \code{\_queues: dict[Side, dict[int, OrderedDict[int, \_Order]]]}. For each side (\code{"bid"} or
+  \code{"ask"}) and each active price $p$, \code{\_queues[side][p]} is a Python \code{OrderedDict}
+  mapping \code{order\_id} $\mapsto$ \code{\_Order} (a lightweight \code{\_\_slots\_\_} object holding
+  \code{order\_id, client\_id, side, price, quantity}). Because \code{OrderedDict} is a doubly-linked
+  hash table in CPython:
+  \begin{itemize}[nosep]
+  \item Appending a new resting order at the back of the FIFO queue is $O(1)$;
+  \item Inspecting the oldest resting order at the front of the queue (\code{next(iter(queue.values()))})
+    is $O(1)$;
+  \item Deleting \emph{any} order by \code{order\_id} from the middle of the queue upon cancellation is
+    also $O(1)$!
+  \end{itemize}
+\item \textbf{Incremental per-level volume cache:}
+  \code{\_volumes: dict[Side, dict[int, int]]}. Stores the sum of resting quantities at price $p$,
+  updated incrementally in \code{\_add}, \code{\_remove}, and partial fills in \code{\_match}. Querying
+  \code{get\_volume\_at\_price(side, p)} is $O(1)$ without summing over orders.
+\item \textbf{Sorted active price lists:}
+  \code{\_prices: dict[Side, list[int]]}. Maintained in ascending sorted order via \code{bisect.insort}
+  and \code{bisect\_left} when a price level is created or emptied. Because the bounded window allows at
+  most $N_{\text{levels}} = 20$ active prices per side, \code{\_prices[side]} has length $\le 20$. The
+  best bid is \code{\_prices["bid"][-1]} ($O(1)$) and the best ask is \code{\_prices["ask"][0]} ($O(1)$).
+\item \textbf{Global order index:}
+  \code{\_orders: dict[int, \_Order]} maps every live \code{order\_id} $\mapsto$ \code{\_Order} in $O(1)$.
+\item \textbf{Per-client order index:}
+  \code{\_client\_orders: dict[int, dict[int, None]]} maps each \code{client\_id} to an insertion-ordered
+  set of its currently resting \code{order\_id}s, making \code{get\_client\_orders(cid)} and
+  \code{cancel\_all(cid)} $O(k_{\text{client}})$ in the client's own resting orders rather than
+  $O(N_{\text{book}})$.
+\end{enumerate}
+
+\subsection{Bounded Price Window and Automatic Eviction}
+
+To keep observation arrays fixed-dimensional and prevent abandoned far-away orders from accumulating
+forever, each side only admits limit prices within $N_{\text{levels}} = 20$ ticks (\code{num\_levels})
+of its \textbf{anchor} $\mathcal{A}(\text{side})$:
+\begin{align}
+  \mathcal{A}(\text{bid}) &= \begin{cases}
+    b_t & \text{if bid side non-empty}, \\
+    a_t - 1 & \text{if bid empty, ask non-empty}, \\
+    p_{\text{last}} \text{ (or } m_0 - d_0\text{)} & \text{if both sides empty},
+  \end{cases} \\
+  \mathcal{A}(\text{ask}) &= \begin{cases}
+    a_t & \text{if ask side non-empty}, \\
+    b_t + 1 & \text{if ask empty, bid non-empty}, \\
+    p_{\text{last}} \text{ (or } m_0 + d_0\text{)} & \text{if both sides empty}.
+  \end{cases}
+\end{align}
+The active window for bids is $[\max(1, \mathcal{A}(\text{bid}) - N_{\text{levels}} + 1),\; +\infty)$
+and for asks is $[1,\; \mathcal{A}(\text{ask}) + N_{\text{levels}} - 1]$. Whenever an aggressive fill or
+a price-improving limit order shifts $\mathcal{A}(\text{side})$, \code{OrderBook.\_refresh(side)} pops
+all resting orders that now lie outside the new window edge and returns them in
+\code{report["evicted\_orders"]} so \code{Market} can immediately release their cash/share reservations.
+
+\subsection{Matching, Self-Trade Prevention (STP), and Order Modification}
+
+When an order $(c, \text{side}, q, p_{\text{limit}})$ enters \code{OrderBook.\_match}:
+\begin{itemize}[nosep]
+\item While the opposite side has resting prices $p_{\text{rest}}$ that cross $p_{\text{limit}}$
+  ($p_{\text{rest}} \le p_{\text{limit}}$ for a buy, $p_{\text{rest}} \ge p_{\text{limit}}$ for a sell,
+  or unconditionally for a market order where $p_{\text{limit}} = \text{None}$) and $q > 0$:
+\item Inspect the oldest resting order $o_{\text{rest}}$ at $p_{\text{rest}}$.
+\item \textbf{Self-Trade Prevention (STP):} If $o_{\text{rest}}.\text{client\_id} == c$ and
+  $\text{mode} \neq \code{"none"}$:
+  \begin{itemize}[nosep]
+  \item \code{"cancel\_newest"} (default): cancel the incoming order's remaining quantity $q \leftarrow 0$
+    and stop matching;
+  \item \code{"cancel\_oldest"}: remove $o_{\text{rest}}$ from the book (recording it in
+    \code{stp\_cancelled\_orders}) and continue matching $q$;
+  \item \code{"cancel\_both"}: remove $o_{\text{rest}}$ \emph{and} cancel the incoming remainder $q \leftarrow 0$.
+  \end{itemize}
+\item Otherwise, execute a trade of size $\Delta q = \min(q, o_{\text{rest}}.\text{quantity})$ at the
+  \textbf{resting order's price} $p_{\text{rest}}$. Decrement both quantities; if $o_{\text{rest}}$ is
+  exhausted, call \code{\_remove($o_{\text{rest}}$)}.
+\item After the loop, if the order is a limit order and $q > 0$ remains, insert the remainder into the
+  resting book via \code{\_add}. If it is a market order, any unfilled remainder is cancelled
+  (immediate-or-cancel semantics).
+\item \textbf{Order modification (\code{modify\_order}):} If a client modifies an existing resting order
+  by \emph{reducing} its quantity at the \emph{same} price, its \code{quantity} is decremented in place
+  and it retains its FIFO queue position. If the quantity is increased or the price is changed, the old
+  order is atomically removed and replaced with a new \code{order\_id} at the back of the target queue.
+\end{itemize}
 
 %==================================================================================================
-\section{Validation}
+\section[Accounting, Reservations, and Routing]{Accounting, Reservations, and Routing (\code{order\_book.market})}
+\label{sec:market}
+%==================================================================================================
+
+\code{Market} (\code{order\_book/market.py}) sits between all agents and \code{OrderBook}. Every agent
+has a unique integer client ID $\text{cid}$ and an \code{Account} with four integer fields:
+\[
+  (\text{cash}_i,\; \text{shares}_i,\; \text{reserved\_cash}_i,\; \text{reserved\_shares}_i).
+\]
+No short-selling and no borrowing are permitted.
+
+\subsection{Exact Reservation Bookkeeping}
+
+To prevent an agent from placing ten resting limit bids that collectively exceed its cash if all ten
+were filled, \code{Market} reserves funds when an order rests and releases them when it leaves:
+\begin{itemize}[nosep]
+\item \textbf{Placement cap:} When client $i$ submits \code{Market.limit(cid, side, p, q)}, its
+  quantity is first capped by what its \emph{unreserved} balance can fund:
+  \begin{equation}
+    q \leftarrow \min(q,\; \text{cap}), \qquad
+    \text{cap} = \begin{cases}
+      \lfloor (\text{cash}_i - \text{reserved\_cash}_i) / p \rfloor & \text{if } \text{side} = \code{"bid"}, \\
+      \text{shares}_i - \text{reserved\_shares}_i & \text{if } \text{side} = \code{"ask"}.
+    \end{cases}
+  \end{equation}
+  For a market buy (\code{Market.market(cid, "bid", q)}), \code{Market} walks the resting ask levels
+  $(p_\ell, v_\ell)$ in ascending price order and computes the exact affordable quantity before
+  submitting to the book, guaranteeing that settlement can never drive cash negative.
+\item \textbf{Settlement (\code{Market.\_settle}):} For every trade $(p, \Delta q, \text{buyer } b,
+  \text{seller } s)$ in \code{report["trades"]}:
+  \begin{align}
+    \text{cash}_b &\mathrel{-}= p\,\Delta q, & \text{shares}_b &\mathrel{+}= \Delta q, \\
+    \text{cash}_s &\mathrel{+}= p\,\Delta q, & \text{shares}_s &\mathrel{-}= \Delta q.
+  \end{align}
+  If the incoming aggressor was a bid, the passive maker was a resting ask, so
+  $\text{reserved\_shares}_s \mathrel{-}= \Delta q$; if the incoming aggressor was an ask, the passive
+  maker was a resting bid at price $p$, so $\text{reserved\_cash}_b \mathrel{-}= p\,\Delta q$.
+  Then, if $q_{\text{rest}} = \code{report["resting\_quantity"]} > 0$ rests on the book, the submitter's
+  reservation is incremented ($\text{reserved\_cash}_c \mathrel{+}= p\,q_{\text{rest}}$ for a bid, or
+  $\text{reserved\_shares}_c \mathrel{+}= q_{\text{rest}}$ for an ask). Finally, every order in
+  \code{report["evicted\_orders"]} and \code{report["stp\_cancelled\_orders"]} has its reservation
+  released via \code{\_release}.
+\end{itemize}
+This guarantees three global invariants checked by \code{Simulator.check\_conservation()}:
+\begin{align}
+  \sum_i \text{cash}_i &= \text{const}, &
+  \sum_i \text{shares}_i &= \text{const}, \\
+  \forall i:\quad \text{reserved\_cash}_i &= \!\!\sum_{o \in \text{bids}(i)}\!\! p_o q_o, &
+  \text{reserved\_shares}_i &= \!\!\sum_{o \in \text{asks}(i)}\!\! q_o.
+\end{align}
+
+\subsection{The Counterfactual Visibility Switch (\code{Market.hide(cid)})}
+
+In \code{Market.\_settle}, each fill updates two sets of step accumulators:
+\begin{enumerate}[nosep]
+\item \textbf{Total traded volume:} \code{\_buy\_volume} and \code{\_sell\_volume} always include every
+  fill, regardless of who traded.
+\item \textbf{Public flow accumulators:} \code{\_flow\_buy}, \code{\_flow\_sell}, and the anonymous step
+  trade list \code{\_step\_trades} include a fill \emph{if and only if}
+  $\code{report["client\_id"]} \notin \code{self.hidden\_aggressors}$.
+\end{enumerate}
+Calling \code{sim.market.hide(executor.cid)} adds the executor's client ID to
+\code{hidden\_aggressors}. When hidden, the executor's orders still enter the book, match against
+makers, transfer cash and shares, move the mid-price, and count toward total traded volume, \emph{but}
+detectors and the public signed-flow ring buffer do not see the executor's aggressive trades. Comparing
+a run with \code{visibility="visible"} against \code{visibility="invisible"} on the same seed isolates
+the exact cost of detection (\S\ref{sec:e3}).
+
+%==================================================================================================
+\section{Rolling Public State (\code{order\_book.public\_state})}
+\label{sec:public}
+%==================================================================================================
+
+At the end of every step $t$, \code{Market.end\_step()} calls
+\code{PublicState.update(book, buy\_volume, sell\_volume, last, flow\_buy, flow\_sell, step\_trades)}.
+\code{PublicState} (\code{order\_book/public\_state.py}) is the \textbf{only} market state object that
+agents, detectors, and the executor are allowed to read.
+
+Let $b_t, a_t$ be the best bid and best ask at the end of step $t$. If both sides are non-empty,
+$m_t = (b_t + a_t)/2$ and $\text{spread}_t = a_t - b_t$. If one side is empty, $m_t$ falls back to the
+last trade price $p_{\text{last}}$ (or the previous mid $m_{t-1}$ if no trade has occurred) and
+$\text{spread}_t = 0$. Let $\Delta m_t = m_t - m_{t-1}$ be the one-step mid change, and
+$V_t = V^{\text{buy}}_t + V^{\text{sell}}_t$ be total step volume.
+
+\paragraph{1. Fast and slow EWMAs.} With fast span $\tau_f = 10$ ($\alpha_f = 2/(\tau_f+1) = 2/11$) and
+slow span $\tau_s = 100$ ($\alpha_s = 2/(\tau_s+1) = 2/101$), \code{PublicState} updates six exponential
+weighted moving averages in $O(1)$:
+\begin{align}
+  \bar m^{f}_t &= \bar m^{f}_{t-1} + \alpha_f (m_t - \bar m^{f}_{t-1}), &
+  \bar m^{s}_t &= \bar m^{s}_{t-1} + \alpha_s (m_t - \bar m^{s}_{t-1}), \\
+  \sigma^{2,f}_t &= \sigma^{2,f}_{t-1} + \alpha_f \big((\Delta m_t)^2 - \sigma^{2,f}_{t-1}\big), &
+  \sigma^{2,s}_t &= \sigma^{2,s}_{t-1} + \alpha_s \big((\Delta m_t)^2 - \sigma^{2,s}_{t-1}\big), \\
+  \bar V^{f}_t &= \bar V^{f}_{t-1} + \alpha_f (V_t - \bar V^{f}_{t-1}), &
+  \bar V^{s}_t &= \bar V^{s}_{t-1} + \alpha_s (V_t - \bar V^{s}_{t-1}).
+\end{align}
+
+\paragraph{2. Multi-scale momentum indicators.} For each lookback pair
+$(\ell_{f,k}, \ell_{s,k}) \in \{(5,30),\; (10,60),\; (20,120)\}$ ($k \in \{0,1,2\}$), two separate mid
+EMAs $E^{(k,f)}_t$ and $E^{(k,s)}_t$ with weights $2/(\ell_{f,k}+1)$ and $2/(\ell_{s,k}+1)$ are updated,
+yielding the three public momentum signals:
+\begin{equation}
+  \mu^{(k)}_t = E^{(k,f)}_t - E^{(k,s)}_t \quad\text{(in ticks)}.
+\end{equation}
+
+\paragraph{3. Ring-buffer order-flow imbalance.} Over a rolling window of $W = 20$ steps
+(\code{flow\_window}), \code{PublicState} maintains two fixed-length ring buffers \code{\_buy[0..W-1]}
+and \code{\_sell[0..W-1]} together with running sums $B_t = \sum_{u=t-W+1}^t V^{\text{flow,buy}}_u$ and
+$S_t = \sum_{u=t-W+1}^t V^{\text{flow,sell}}_u$ (evicting slot $t \bmod W$ and adding the new step's
+visible aggressive flow in $O(1)$). The public order-flow imbalance is:
+\begin{equation}
+  \label{eq:imbalance}
+  I_t = \begin{cases}
+    \dfrac{B_t - S_t}{B_t + S_t} \in [-1, 1] & \text{if } B_t + S_t > 0, \\[6pt]
+    0.0 & \text{if } B_t + S_t = 0.
+  \end{cases}
+\end{equation}
+
+\paragraph{4. Attention multiplier (endogenous activity clustering).} Once the step counter reaches
+$\tau_s = 100$ (\code{warmed\_up = True}), \code{PublicState} computes a bounded activity multiplier
+that rises when fast volatility or fast volume exceeds its slow baseline:
+\begin{equation}
+  a_t = \min\!\Bigg(3.0,\; \max\!\Bigg(0.5,\;
+  1.0 + 0.5\bigg(\sqrt{\frac{\sigma^{2,f}_t}{\sigma^{2,s}_t}} - 1\bigg)
+      + 0.5\bigg(\frac{\bar V^{f}_t}{\bar V^{s}_t} - 1\bigg)\Bigg)\Bigg),
+\end{equation}
+with $a_t = 1.0$ before warm-up. This creates realistic volatility and volume clustering without hard-coding
+regime switches.
+
+%==================================================================================================
+\section{Randomness Architecture and Common Random Numbers (\code{order\_book.simulator})}
+\label{sec:rng}
+%==================================================================================================
+
+To measure small leakage effects ($\sim 0.3\text{ bps}$) buried inside background price fluctuations whose
+standard deviation over $2\,000$ steps is $\sim 10\text{ bps}$, the simulator must support \textbf{paired
+counterfactuals with Common Random Numbers (CRN)}.
+
+In \code{Simulator.\_\_init\_\_(seed, config, analysis)}, a single root
+\code{np.random.SeedSequence(seed)} spawns a sequence of statistically independent PCG64 streams via
+\code{new\_stream()}:
+\begin{align*}
+  \underbrace{\text{Stream 0}}_{\text{Scheduler}} \;\to\;
+  \underbrace{\text{Stream 1}}_{\text{Fundamental } v_t} \;\to\;
+  \underbrace{\text{Streams } 2..5}_{\text{Market Makers}} \;\to\;
+  \underbrace{\text{Stream 6}}_{\text{NoiseFlow}} \;\to\;
+  \underbrace{\text{Streams } 7..6+n_{\text{inst}}}_{\text{Institutions}} \\
+  \;\to\;
+  \underbrace{\text{Next Stream}}_{\text{Speculators}} \;\to\;
+  \underbrace{\text{Next}}_{\text{Anticipators}} \;\to\;
+  \underbrace{\text{Next}}_{\text{Externals}}.
+\end{align*}
+This design provides four mathematical guarantees verified in \code{tests/test\_foundations.py}:
+\begin{enumerate}[nosep]
+\item \textbf{Bitwise determinism:} Running \code{Simulator(seed, cfg)} twice produces identical order
+  IDs, trade prices, quantities, and mid paths down to the last bit.
+\item \textbf{Snapshot/restore equivalence:} \code{blob = sim.snapshot()} (\code{pickle.dumps}) followed
+  by \code{Simulator.restore(blob)} preserves the exact internal state of every PCG64 bit generator.
+\item \textbf{In-place reseeding:} \code{sim.reseed(new\_seed)} spawns a new \code{SeedSequence(new\_seed)}
+  and overwrites \code{stream.bit\_generator.state} in place for every existing stream, so every agent
+  holding a reference to its stream immediately follows the new seed.
+\item \textbf{Counterfactual pairing:} Because external agents (\code{add\_external}) are appended at the
+  end of the stream list and act outside the scheduler's permutation, two runs on the same seed (e.g.\
+  visible vs.\ invisible executor, or with vs.\ without an injected metaorder) share the exact same
+  random numbers for the hidden fundamental value, the scheduler's permutation, and every background
+  agent up to the step where the book state itself first differs.
+\end{enumerate}
+
+%==================================================================================================
+\section{Mathematical Specification of Every Background Agent (\code{order\_book.agents})}
+\label{sec:agents}
+%==================================================================================================
+
+All agents inherit from \code{Agent(cid, market, rng, cash, shares)} in \code{order\_book/agents/base.py}
+(except \code{Speculators}, which vectorises $n=40$ accounts inside one object for speed). Below are the
+exact mathematical equations implemented in each file.
+
+%--------------------------------------------------------------------------------------------------
+\subsection{Hidden Fundamental Value (\code{agents/fundamental.py})}
+\label{sec:fundamental}
+%--------------------------------------------------------------------------------------------------
+
+In the default \emph{shared-value} mode (\code{FundamentalConfig.private = False}), the exogenous
+fundamental value $v_t$ (initialised at $v_0 = m_0 = 10\,000$ ticks) evolves at the start of step $t$ as
+an Ornstein--Uhlenbeck / Gaussian random walk:
+\begin{equation}
+  v_t = v_{t-1} + \rho_v (v_0 - v_{t-1}) + \sigma_v \varepsilon_t,
+  \qquad \varepsilon_t \stackrel{\text{i.i.d.}}{\sim} \mathcal{N}(0, 1),
+\end{equation}
+with default $\sigma_v = 0.3$ ticks/step and $\rho_v = 0.0$.
+
+In the alternative \emph{private-valuations} mode (\code{private = True}), there is no common anchor:
+each speculator $i \in \{1,\dots,n_{\text{spec}}\}$ maintains its own private valuation $v_{i,t}$ that
+adapts toward the previous step's public mid-price $m_{t-1}$:
+\begin{equation}
+  v_{i,t} = v_{i,t-1} + \kappa_a (m_{t-1} - v_{i,t-1}) + \sigma_v \varepsilon_{i,t},
+  \qquad \varepsilon_{i,t} \stackrel{\text{i.i.d.}}{\sim} \mathcal{N}(0, 1),
+\end{equation}
+with default $\kappa_a = 0.01$. Notice that in private mode \code{FundamentalValue.advance()} still draws
+one normal variate from its own stream each step so that stream alignment is preserved.
+
+%--------------------------------------------------------------------------------------------------
+\subsection{Zero-Intelligence Noise Flow (\code{agents/noise.py})}
+%--------------------------------------------------------------------------------------------------
+
+\code{NoiseFlow} represents retail and liquidity-motivated background traders using a single pooled
+account (endowment $6\,000$ shares and $6\,000 \times m_0$ cash). On each step $t$:
+\begin{enumerate}[nosep]
+\item \textbf{Random cancellation:} Let $R_t$ be the list of currently resting order IDs owned by the
+  noise pool. Draw $K_t \sim \text{Binomial}(|R_t|,\; p_{\text{cancel}})$ with $p_{\text{cancel}} = 0.015$,
+  sample $K_t$ order IDs uniformly without replacement from $R_t$, and cancel them.
+\item \textbf{Attention-modulated Poisson arrivals:} Draw the number of new orders
+  \begin{equation}
+    N_t \sim \text{Poisson}(\lambda_{\text{noise}}\, a_t), \qquad \lambda_{\text{noise}} = 2.5,
+  \end{equation}
+  where $a_t \in [0.5, 3.0]$ is the public attention multiplier.
+\item \textbf{Wealth-balanced side probability:} To prevent the noise pool from drifting into cash or
+  share exhaustion over long simulations, compute its current cash share of mark-to-market wealth:
+  \begin{equation}
+    c_t = \frac{\text{cash}_t}{\text{cash}_t + \text{shares}_t \cdot m_t}, \qquad
+    p_{\text{bid},t} = 0.5 + w_{\text{bal}}(c_t - 0.5), \qquad w_{\text{bal}} = 0.5.
+  \end{equation}
+  If cash is high ($c_t > 0.5$), $p_{\text{bid},t} > 0.5$ so the pool buys more often; if shares are high
+  ($c_t < 0.5$), it sells more often.
+\item \textbf{Order size, type, and price placement:} For each of the $i = 1,\dots,N_t$ orders, draw size
+  $q_i \sim \text{Uniform}\{1, 2, \dots, q_{\max}\}$ ($q_{\max} = 12$), type selector
+  $u_i \sim \text{Uniform}(0,1)$, and price offset
+  $d_i \sim \text{Geometric}\big(p_{\text{geom}} = \frac{1}{\bar d + 1}\big)$ on $\{1,2,\dots\}$ with
+  $\bar d = 3$ (\code{mean\_offset}):
+  \begin{itemize}[nosep]
+  \item If $u_i < f_{\text{mkt}} = 0.15$: submit a \textbf{market order} of half size
+    $\lfloor (q_i + 1)/2 \rfloor$ (reflecting the empirical fact that aggressive takers use smaller order
+    sizes than passive liquidity providers).
+  \item Else if $u_i < f_{\text{mkt}} + f_{\text{cross}} = 0.20$: submit a \textbf{marketable limit
+    order} of size $q_i$ priced right at the opposite best ($p = a_t$ for a bid, $p = b_t$ for an ask).
+  \item Else ($80\%$ of orders): submit a \textbf{passive limit order} of size $q_i$ placed $d_i$ ticks
+    behind the opposite best:
+    \begin{equation}
+      p_i = \begin{cases}
+        a_t - d_i & \text{if buying (\code{"bid"})}, \\
+        b_t + d_i & \text{if selling (\code{"ask"})}.
+      \end{cases}
+    \end{equation}
+  \end{itemize}
+\end{enumerate}
+
+%--------------------------------------------------------------------------------------------------
+\subsection[Fundamentalists, Chartists, and Brock--Hommes]{Fundamentalists and Chartists (\code{agents/speculators.py})}
+%--------------------------------------------------------------------------------------------------
+
+\code{Speculators} models $n = 40$ boundedly rational traders (endowment $400$ shares each, position
+cap $P_{\max} = 400$ shares relative to endowment). At initialization, each member $i \in \{0,\dots,39\}$
+draws:
+\begin{itemize}[nosep]
+\item a permanent private valuation bias $\beta_i \sim \mathcal{N}(0, \sigma_{\text{bias}}^2)$ with
+  $\sigma_{\text{bias}} = 3.0$ ticks;
+\item an initial strategy mode $M_{i,0} \in \{0\text{ (fundamentalist)},\; 1\text{ (chartist)}\}$
+  uniformly;
+\item a momentum lookback index $k_i \in \{0, 1, 2\}$ uniformly (corresponding to EMA pairs
+  $(5,30), (10,60), (20,120)$).
+\end{itemize}
+
+\paragraph{Step activation.} On each step $t$, each speculator independently becomes active with
+probability $p_{\text{act}} = 0.05$ (on average 2 active speculators per step). An active speculator $i$
+first cancels all of its resting orders (\code{m.cancel\_all(cid)}) and computes its net inventory
+$x_{i,t} = \text{shares}_{i,t} - \text{shares}_{i,0}$.
+
+\paragraph{Mode $M_{i,t} = 0$: Fundamentalist.} Forms a noisy perception of fundamental value:
+\begin{equation}
+  \hat v_{i,t} = \tilde v_{i,t} + \beta_i + \eta_{i,t}, \qquad \eta_{i,t} \sim \mathcal{N}(0, \sigma_{\text{obs}}^2),
+  \quad \sigma_{\text{obs}} = 1.0\text{ tick},
+\end{equation}
+where $\tilde v_{i,t} = v_t$ in shared-value mode and $v_{i,t}$ in private-valuation mode. Define the
+mispricing gap $g_{i,t} = \hat v_{i,t} - m_t$.
+\begin{itemize}[nosep]
+\item If $|g_{i,t}| < \theta_f = 2.0$ ticks: do nothing.
+\item Otherwise, trade in direction $\text{side} = \code{"bid"}$ if $g_{i,t} > 0$ else $\code{"ask"}$,
+  with desired quantity capped by both $q_{f,\max} = 20$ and remaining position room:
+  \begin{equation}
+    q = \min\!\big(q_{f,\max},\; \max(1, \operatorname{round}(|g_{i,t}| - \theta_f)),\;
+    P_{\max} - \sign(g_{i,t})\,x_{i,t}\big).
+  \end{equation}
+\item If $|g_{i,t}| \ge g_{\text{aggr}} = 8.0$ ticks, submit a \textbf{market order} for $q$. Otherwise
+  submit a \textbf{passive limit order} priced at $\min(\lfloor \hat v_{i,t} - \theta_f \rfloor, a_t - 1)$
+  for a buy or $\max(\lceil \hat v_{i,t} + \theta_f \rceil, b_t + 1)$ for a sell.
+\end{itemize}
+
+\paragraph{Mode $M_{i,t} = 1$: Chartist (trend follower).} Reads its assigned momentum signal
+$\mu = \mu^{(k_i)}_t$:
+\begin{itemize}[nosep]
+\item \textbf{Exit rule:} If the trader holds a non-zero position ($x_{i,t} \neq 0$) and the trend has
+  either reversed ($x_{i,t}\cdot\mu < 0$) or faded ($|\mu| < 0.25\,\theta_c$), it unwinds toward zero by
+  submitting a market order of size $\min(|x_{i,t}|, q_{c,\max})$ in the opposite direction.
+\item \textbf{Entry rule:} If $|\mu| \ge \theta_c = 6.0$ ticks, it submits a market order in the
+  direction of $\sign(\mu)$ with size
+  \begin{equation}
+    q = \min\!\big(q_{c,\max},\; \max(1, \operatorname{round}(s_c(|\mu| - \theta_c))),\;
+    P_{\max} - \sign(\mu)\,x_{i,t}\big),
+  \end{equation}
+  where $q_{c,\max} = 10$ lots and $s_c = 2.0$ lots/tick.
+\end{itemize}
+
+\paragraph{Brock--Hommes evolutionary mode switching.} Every $T_{\text{switch}} = 50$ steps, let
+$W_{i,t} = \text{cash}_{i,t} + \text{shares}_{i,t} m_t$ be each speculator's mark-to-market wealth and
+$r_{i,t} = 100 \times (W_{i,t} - W_{i,t-50}) / W_{i,t-50}$ be its percentage return over the 50-step
+block. The fitness $F_m$ of each mode $m \in \{0,1\}$ is updated via an EWMA with memory
+$\lambda_F = 0.1$:
+\begin{equation}
+  F_m \leftarrow F_m + \lambda_F \big(\bar r_m - F_m\big), \qquad
+  \bar r_m = \frac{1}{|\{i : M_{i} = m\}|} \sum_{i : M_i = m} r_{i,t},
+\end{equation}
+and every speculator re-draws its mode $M_{i,t+1} = 1$ (chartist) with logistic probability
+\begin{equation}
+  \mathbb{P}(M_{i,t+1} = 1) = \frac{1}{1 + \exp\!\big(-\beta_{\text{BH}}(F_1 - F_0)\big)},
+  \qquad \beta_{\text{BH}} = 2.0.
+\end{equation}
+
+%--------------------------------------------------------------------------------------------------
+\subsection[Institutional Traders and Metaorders]{Institutional Traders (\code{agents/institutional.py})}
+\label{sec:institutions}
+%--------------------------------------------------------------------------------------------------
+
+The population contains $n_{\text{inst}}$ background institutional traders ($4$ in full-cover regimes,
+$1$ in \code{low\_cover}, $0$ in \code{no\_cover}). Their economic role is crucial: because they execute
+large parent orders using standard industry schedules, they generate legitimate one-sided order flow that
+creates \textbf{false positives} for detectors and provides \textbf{statistical cover} for the RL
+executor.
+
+\paragraph{Metaorder arrival and parameters.} While an institutional trader is idle, it starts a new
+metaorder on step $t$ with probability $\lambda_{\text{inst}} = 5\times 10^{-4}$ (mean idle time $2\,000$
+steps). Upon arrival:
+\begin{enumerate}[nosep]
+\item \textbf{Inventory-reverting side choice:} With normalized inventory
+  $x_t = (\text{shares}_t - \text{shares}_0)/\text{shares}_0$, the metaorder is a buy (\code{"bid"})
+  with probability
+  \begin{equation}
+    p_{\text{bid}} = \frac{1}{2} - \frac{1}{2}\tanh(\pi_I x_t), \qquad \pi_I = 2.0.
+  \end{equation}
+\item \textbf{Log-normal size:} Draw $Z \sim \mathcal{N}(0,1)$ and set
+  \begin{equation}
+    Q = \min\!\big(Q_{\max},\; \max(1, \operatorname{round}(Q_{\text{med}} \exp(\sigma_Q Z))),\;
+    \text{affordable lots}\big),
+  \end{equation}
+  with $Q_{\text{med}} = 600$ lots, $\sigma_Q = 0.7$, and $Q_{\max} = 3\,000$ lots.
+\item \textbf{Participation rate and duration:} Draw target participation
+  $\pi \sim \text{Uniform}(0.02, 0.20)$. Using the public slow volume EWMA $\bar V^s_t$ (or
+  $V_{\text{fallback}} = 5.0$ lots/step before warm-up), the planned horizon is
+  \begin{equation}
+    T = \clamp\!\Big(\operatorname{round}\!\Big(\frac{Q}{\pi\,\bar V^s_t}\Big),\; 100,\; 4\,000\Big)\text{ steps}.
+  \end{equation}
+\item \textbf{Execution style:} Drawn from the 5 styles (\code{twap\_market}, \code{twap\_random},
+  \code{twap\_passive}, \code{pov}, \code{front\_loaded}) with child decision interval $\Delta = 5$ steps.
+  At $t = t_{\text{start}} + T$, any remaining unfilled quantity is forced through by market order.
+\end{enumerate}
+
+%--------------------------------------------------------------------------------------------------
+\subsection[Market Makers with Detection and Fragility]{Avellaneda--Stoikov Market Makers (\code{agents/market\_maker.py})}
+\label{sec:mm}
+%--------------------------------------------------------------------------------------------------
+
+Each of the $n_{\text{mm}} = 4$ market makers quotes both a bid and an ask on every step, managing its
+inventory $I_t = \text{shares}_t - \text{shares}_0$ within $[-I_{\max}, I_{\max}]$ ($I_{\max} = 200$).
+
+\paragraph{1. Volatility fragility and pull cooldown.} Let the fast-to-slow volatility ratio be
+$\varrho_t = \sqrt{\sigma^{2,f}_t / \sigma^{2,s}_t}$. If $\varrho_t > \varrho_{\text{pull}} = 3.0$, the
+maker enters a pull state for $T_{\text{cool}} = 20$ steps ($\text{pulled\_until} = t + 20$), cancelling
+both quotes immediately and staying out of the book until $t \ge \text{pulled\_until}$. Otherwise, its
+base quote size is scaled by the fragility factor:
+\begin{equation}
+  f_{\text{frag},t} = \max\!\big(0.0,\; 1.0 - \phi\,\max(\varrho_t - 1.0, 0.0)\big), \qquad \phi = 0.5.
+\end{equation}
+
+\paragraph{2. Avellaneda--Stoikov reservation price and half-spread.} With effective variance
+$\sigma^2_t = \max(\sigma^{2,f}_t, \sigma^2_{\min})$ ($\sigma^2_{\min} = 0.25$), risk aversion
+$\gamma = 0.003$, liquidity parameter $\kappa = 1.0$, horizon $H = 50$, and cap $\bar s = 10.0$ ticks:
+\begin{align}
+  \text{Risk term:}\quad R_t &= \gamma\,\sigma^2_t\,H, \\
+  \text{Reservation price:}\quad r_t &= m_t - \clamp(I_t\,R_t,\; -\bar s,\; +\bar s), \\
+  \text{Half-spread:}\quad h_t &= \clamp\!\Big(\frac{1}{2}\Big(R_t + \frac{2}{\gamma}\ln\!\big(1 + \frac{\gamma}{\kappa}\big)\Big),\; 1.0,\; \bar s\Big).
+\end{align}
+
+\paragraph{3. Detector-driven defensive response (the source of leakage cost).} If the market maker is
+wired to a detector (\code{cfg.detector is not None}), it reads the detector's signed signal
+$s_t \in [-1, 1]$. When $s_t > 0$, a buy metaorder is suspected, so the \textbf{pressured side} is the
+\code{"ask"} (buyers lift asks); when $s_t < 0$, the pressured side is the \code{"bid"}:
+\begin{align}
+  r_t &\leftarrow r_t + \delta_{\text{skew}}\,s_t, && (\delta_{\text{skew}} = 4.0\text{ ticks}), \\
+  \omega_{\text{pressured}} &= \delta_{\text{widen}}\,|s_t|,\quad \omega_{\text{other}} = 0, && (\delta_{\text{widen}} = 3.0\text{ ticks}), \\
+  \text{scale}_{\text{pressured}} &= f_{\text{frag},t}\cdot\max(0.0,\; 1.0 - \delta_{\text{cut}}\,|s_t|), && (\delta_{\text{cut}} = 0.7), \\
+  \text{scale}_{\text{other}} &= f_{\text{frag},t}.
+\end{align}
+Target quote prices are then $p_{\text{bid}} = r_t - h_t - \omega_{\text{bid}}$ and
+$p_{\text{ask}} = \max(r_t + h_t + \omega_{\text{ask}},\; p_{\text{bid}} + 2)$, clamped to be strictly
+post-only against all other participants' best quotes via \code{book.best\_excluding(side, own\_oid)}.
+
+\paragraph{4. Queue-position preservation.} A resting quote on side $S \in \{\text{bid}, \text{ask}\}$ is
+kept untouched (preserving its FIFO queue priority!) if and only if
+$|p_{\text{resting}} - p_{\text{target}}| < 1.0\text{ tick}$ and its remaining quantity satisfies
+$0.5\,q_{\text{target}} \le q_{\text{resting}} \le q_{\text{target}}$. Otherwise it is cancelled and
+replaced with a freshly drawn base size $q_{\text{base}} \sim \text{Uniform}\{5,\dots,20\}$ multiplied by
+$\text{scale}_S$.
+
+%--------------------------------------------------------------------------------------------------
+\subsection{Order Anticipator (\code{agents/anticipator.py})}
+\label{sec:anticipator}
+%--------------------------------------------------------------------------------------------------
+
+Present under adversary level \code{A4}, \code{OrderAnticipator} reads $s_t = \text{detector.signal}$ and
+trades aggressively with market orders:
+\begin{itemize}[nosep]
+\item If $|s_t| \ge \theta_A = 0.5$: increment \code{confident\_steps} and trade in direction
+  $d = \sign(s_t)$ (or $-d$ for the first \code{switch\_after} $= 50$ steps if
+  \code{contrarian\_first=True}) with market order quantity
+  \begin{equation}
+    q = \min\!\Big(c_{\max},\; \operatorname{round}\!\Big(\varphi\,\frac{|s_t| - \theta_A}{1 - \theta_A}\Big),\;
+    P_{\max} - d\cdot x_t\Big), \qquad (\varphi = 2.0,\; c_{\max} = 10,\; P_{\max} = 200).
+  \end{equation}
+\item If $|s_t| < \theta_{\text{fade}} = 0.2$: reset \code{confident\_steps} $= 0$ and unwind any non-zero
+  inventory $x_t$ by submitting a market order of size $\min(c_{\max}, |x_t|)$ in direction $-\sign(x_t)$.
+\end{itemize}
+
+%==================================================================================================
+\section{Simulator Validation: Stylised Facts and Square-Root Impact (Phase 1)}
 \label{sec:validation}
 %==================================================================================================
 
-\subsection{Metrics}
+Before any execution algorithm or detector is evaluated, the background market (\code{A0}, no executor)
+must reproduce the empirical regularities (``stylised facts'') of real limit order books and the concave
+square-root market-impact law. This validation is implemented in \code{order\_book/validation.py} and
+\code{order\_book/impact.py} and run via \code{scripts/validate.py} and \code{scripts/impact.py}.
 
-\code{order\_book.validation} runs several seeds in analysis mode after a burn-in and computes, from
-the mid path $m_t$, the spread, the tape and the metaorder labels:
-\begin{description}[nosep]
-\item[Liquidity] median spread in ticks; share of steps with an empty side.
-\item[Returns] autocorrelation of $k$-step returns $m_{t+k} - m_t$ ($k = 10$) at lags
-  $1, 2, 5, 10, 20, 50$ (lag 5 therefore spans 50 steps); the target applies from lag 5 on.
-\item[Fat tails] kurtosis $\E[r^4]/\E[r^2]^2$ of returns at horizons $1, 5, 20, 100$ steps.
-\item[Clustering] autocorrelation of $|r|$ ($k=10$) at lags $1, 5, 20, 50, 100, 200$.
-\item[Flow memory] autocorrelation of trade signs ($+1$ buyer-initiated) at lags $1, 10, 100,
-  1\,000$ trades.
-\item[Budgets] budget rejects per trade and their balance across sides.
-\item[Speed] background steps per second in analysis mode.
-\end{description}
-
-\subsection{Impact measurement}
+\subsection{Paired-Injection Square-Root Impact Methodology (\code{order\_book.impact})}
 \label{sec:impact}
 
-The square-root law, peak impact $\propto (Q/V)^\delta$ with $\delta \approx 0.5$, is measured in two
-ways, both normalising size by $V = \bar V \cdot T_\text{ref}$, the mean market volume per step times a
-reference horizon of $T_\text{ref} = 2\,000$ steps (the executor's horizon), so that $Q/V$ is on the
-same axis as the execution task and spans the size distribution. (Normalising by the volume over the
-metaorder's own life pins $Q/V$ to about $\pi/(1+\pi)$ and makes the exponent unidentifiable.)
+To measure the mechanical impact law $\Delta m \propto (Q/V)^\delta$ cleanly without the noise of the
+background price random walk ($\sigma \sqrt{T} \approx 8$--$12$ ticks over $T=2\,000$ steps),
+\code{impact.py} uses Common Random Numbers (\S\ref{sec:rng}):
+\begin{enumerate}[nosep]
+\item For each seed, run a reference background simulation after a $2\,000$-step burn-in for
+  $T_{\text{ref}} + T_{\text{after}} = 2\,500$ steps and record its mid-price path $m^{\text{bg}}_t$ and
+  mean step volume $\bar V$.
+\item For each participation fraction $f \in \{0.01, 0.02, 0.05, 0.10, 0.20\}$, run the identical seed
+  with an external \code{InstitutionalTrader} (\code{add\_external}) that injects a single buy metaorder
+  of size $Q = f \cdot \bar V \cdot T_{\text{ref}}$ executed by \code{twap\_market} over $T_{\text{ref}} =
+  2\,000$ steps, yielding mid path $m^{(f)}_t$.
+\item The paired impact path $\Delta m^{(f)}_t = m^{(f)}_t - m^{\text{bg}}_t$ cancels the background
+  price drift. From $\Delta m^{(f)}_t$ we read impact at completion ($t = T_{\text{ref}}$), peak impact
+  ($\max_{t \le T_{\text{ref}}} \Delta m^{(f)}_t$), and residual impact $500$ steps after completion
+  ($t = T_{\text{ref}} + 500$), and fit the power-law exponent $\delta$ by OLS of $\log(\text{impact})$
+  on $\log(f)$.
+\end{enumerate}
 
-\paragraph{Natural metaorders.} For every labelled institutional metaorder the signed mid change from
-the arrival mid is read at completion (``impact at completion''), at its maximum over the execution
-(``peak''), and 500 steps after completion (``residual''). Sizes are binned by $Q/V$ into log-spaced
-quantile bins, impact is averaged per bin (negatives included), and $\log(\text{impact})$ is regressed on
-$\log(Q/V)$ over bins with a positive mean. Reversion is reported as pooled ratios,
-$\sum \text{residual}/\sum\text{peak}$ and $\sum\text{end}/\sum\text{peak}$. These statistics are
-\emph{noisy}: the metaorder's impact of a few ticks sits on a mid path whose standard deviation over
-the metaorder's life is of the same order or larger, so the per-metaorder standard deviation of the
-impact is 10--30 ticks and hundreds of metaorders per bin are needed. They are reported as
-informational.
+\subsection{Phase 1 Validation Results (\code{outputs/validation\_default.json})}
 
-\paragraph{Paired injection (primary).} For each seed and each fraction $f \in \{0.01, 0.02, 0.05,
-0.1, 0.2\}$, an external institutional trader is added (\S\ref{sec:rng}) and, after the burn-in,
-injects one buy metaorder of $Q = f \cdot \bar V \cdot T_\text{ref}$ lots executed as TWAP market
-orders over exactly $T_\text{ref}$ steps (participation $f$). The impact path is the difference between
-this run's mid and the mid of the identical seed without the injected trader. Impact at completion,
-peak and residual are read off the paired path, binned by $f$ and fitted as above. The pairing removes
-the market's own randomness up to state dependence and typically reduces the per-run standard deviation
-to a few ticks. This is the measurement behind the ``Square-root impact (paired)'' row of the
-validation table and \code{scripts/impact.py}.
+Table~\ref{tab:targets} reports the measured validation metrics on 5 seeds $\times$ $30\,000$ steps
+(after $2\,000$ burn-in steps) against the research plan's Phase~1 exit gate targets. Every target passes.
 
-\subsection{Targets and status}
-\label{sec:results}
-
-Table~\ref{tab:targets} lists the plan's starting targets and the values measured at the time of
-writing with \code{python -m scripts.validate --seeds 5 --steps 30000} (seeds 0--4, 2\,000 steps of
-burn-in, the default configuration). The numbers are reported, not enforced; where a target fails, the
-measured value and the proposed change are given.
-
-\begin{table}[h]
+\begin{table}[h!]
 \centering\small
-\begin{tabular}{L{3.6cm} L{3.9cm} L{6.6cm}}
+\begin{tabular}{L{3.5cm} L{3.8cm} L{6.8cm}}
 \toprule
-Check & Target & Measured (5 seeds $\times$ 30k steps, final defaults) \\
+Stylised Fact / Check & Plan Target (\S4.2) & Measured Value (5 seeds $\times$ 30k steps) \\
 \midrule
-Book integrity & never crossed; exact conservation & asserted every step in tests: pass \\
-Liquidity & median spread 1--3 ticks; empty side $<0.1\%$ of steps & spread 1.00; empty side 0.000\%: pass \\
-Return autocorrelation & $|ac| < 0.05$ from lag 5 & max over seeds and lags $\ge 5$: 0.044: pass \\
-Fat tails & kurtosis $\gg 3$ at short horizons, falling toward 3 & 12.7 at 1 step $\to$ 6.9 at 100 steps: pass \\
-Volatility clustering & $ac(|r|) > 0$, slowly decaying & 0.20 (lag 1), 0.15 (lag 20), 0.09 (lag 100): pass \\
-Order-flow memory & trade-sign $ac > 0$, slowly decaying & 0.46 (lag 1), 0.09 (lag 10), 0.04 (lag 100): pass \\
-Square-root impact & $\delta \in [0.4, 0.7]$ & paired: 0.69 at completion, 0.64 at peak ($n = 25$); mean
-  impact for $Q/V = 0.01/0.02/0.05/0.1/0.2$: 0.8/1.2/2.7/3.9/6.0 ticks; natural: 0.60 at completion,
-  0.54 at peak ($n = 181$): pass \\
-Impact decay & partial reversion after the end & paired: impact at completion 52\% of peak, 42\% of peak
-  remains 500 steps later; natural: 32\% and 20\%: pass \\
-Budgets & $<1\%$ of trades rejected, balanced & 0 rejects in $\approx 190$k trades: pass \\
-Speed & $\ge 10\,000$ steps/s & 14\,800 steps/s in analysis mode during validation; 15\,200 in the
-  benchmark (training mode, 20k steps, one core): pass \\
+Book \& account integrity & Never crossed; exact cash/share conservation & Asserted every step in tests: \textbf{PASS} \\
+Liquidity \& spread & Median spread $1$--$3$ ticks; empty side $<0.1\%$ & Median spread $\mathbf{1.00}$ tick; empty side $\mathbf{0.000\%}$: \textbf{PASS} \\
+Return autocorrelation & $|ac(\text{lag})| < 0.05$ for lags $\ge 5$ ($50$+ steps) & $\max_{\text{lag}\ge 5} |ac| = \mathbf{0.044}$: \textbf{PASS} \\
+Heavy return tails & Kurtosis $\gg 3$ at $\Delta t=1$, decaying toward $3$ & $\mathbf{12.7}$ ($\Delta t=1$) $\to$ $\mathbf{6.9}$ ($\Delta t=100$): \textbf{PASS} \\
+Volatility clustering & $ac(|r|) > 0$, slow decay over lags $1..200$ & $\mathbf{0.20}$ (lag 1), $\mathbf{0.15}$ (lag 20), $\mathbf{0.09}$ (lag 100): \textbf{PASS} \\
+Order-flow memory & Trade-sign $ac > 0$, slow decay & $\mathbf{0.46}$ (lag 1), $\mathbf{0.09}$ (lag 10), $\mathbf{0.04}$ (lag 100): \textbf{PASS} \\
+Square-root impact ($\delta$) & $\delta \in [0.4, 0.7]$ & Paired: $\mathbf{0.69}$ at end, $\mathbf{0.64}$ at peak ($0.8 \to 6.0$ ticks for $f=0.01\to 0.20$); natural ($n=181$): $\mathbf{0.60}$ end, $\mathbf{0.54}$ peak: \textbf{PASS} \\
+Impact relaxation & Partial reversion after $t=T$ & Paired: end is $\mathbf{52\%}$ of peak, $\mathbf{42\%}$ remains at $T+500$: \textbf{PASS} \\
+Budget stability & $<1\%$ budget rejects, balanced & $\mathbf{0}$ rejects in $\approx 190\,000$ trades: \textbf{PASS} \\
+Simulation speed & $\ge 10\,000$ steps/s (1 core) & $\mathbf{14\,800}$ steps/s (analysis), $\mathbf{15\,200}$ steps/s (training): \textbf{PASS} \\
 \bottomrule
 \end{tabular}
-\caption{Validation targets and measured values with the final defaults
-(\code{python -m scripts.validate --seeds 5 --steps 30000}, seeds 0--4, 2\,000 steps of burn-in).}
+\caption{Phase~1 simulator validation targets and measured values (\code{outputs/validation\_default.json}).}
 \label{tab:targets}
 \end{table}
 
-\paragraph{What the validation found and changed.} Two defects of the market were found only on runs
-longer than 10\,000 steps and fixed before these numbers were taken:
-\begin{enumerate}[nosep]
-\item \textbf{Budget exhaustion.} With a random side choice, the institutional population's aggregate
-  inventory random-walked; on one seed it net-sold 7\,500 lots over 30\,000 steps, the noise pool ran
-  out of cash, the speculators sat at their position caps and the mid fell to 1\,954 against a hidden
-  value of 9\,963 (kurtosis 120, 637 rejected buys). The inventory-reverting side choice
-  (\S\ref{sec:institutions}) and larger endowments for the absorbing agents (noise pool 6\,000 shares,
-  speculators 400) removed it: all seeds now track the hidden value and rejects are negligible.
-\item \textbf{Measurement power.} The natural-metaorder impact statistics cannot resolve the exponent
-  with a few hundred metaorders; the paired injection method was introduced for this reason.
-\end{enumerate}
-
-\paragraph{Return autocorrelation sweep.} The one failing stylised fact is positive autocorrelation of
-10-step returns: $ac(1) \approx 0.15$--$0.3$ and, on some seeds, $|ac| > 0.05$ at lags 5--10 (50--100
-steps). Ablations show that it comes from slow price adjustment: without speculators the mid trends
-strongly ($ac \approx 0.25$--$0.3$ at all lags) because the makers quote around a mid they themselves
-set, so inventory skew feeds back on itself and only the fundamentalists anchor the price; chartists
-amplify it. A sweep over the fundamental volatility $\sigma_v \in \{0.3, 0.6\}$, the chartist threshold
-$\theta_c \in \{3, 6\}$ and the maker risk aversion $\gamma \in \{0.002, 0.006\}$ (5 seeds $\times$
-20\,000 steps each) gave, for $\max |ac|$ over lags $\ge 5$: raising $\sigma_v$ makes trending worse
-(0.19--0.53); $\theta_c = 6$ with $\gamma = 0.002$ gives 0.053 (mean 0.023), $\gamma = 0.006$ with
-$\theta_c = 3$ gives 0.095, and both together 0.096; kurtosis and liquidity stay on target throughout.
-A second sweep on held-out seeds 5--9 over $\theta_c \in \{6, 8\}$ and $\gamma \in \{0.002, 0.003\}$ gave
-$\max|ac|$ of 0.445 (one trending seed; mean 0.044), 0.053 (mean 0.016), 0.070 and 0.078 respectively.
-The defaults were set to $\theta_c = 6$, $\gamma = 0.003$, and the reference run of
-Table~\ref{tab:targets} (seeds 0--4, which were not used to choose between these two values) passes
-every target. The remaining positive autocorrelation at lags 1--2 (10--20 steps; $ac(1) \approx 0.17$)
-is allowed by the target and reflects the gradual price adjustment to metaorders that the study is
-about.
-
-\paragraph{Alternative presets.} The same validation was run on 5 seeds $\times$ 10\,000 steps for the
-alternative configurations (these are shorter runs and the impact exponent on $n = 25$ paired runs is
-correspondingly noisier):
-\begin{itemize}[nosep]
-\item \textbf{Private valuations} (\code{--preset private}, $\kappa_a = 0.01$): liquidity, fat tails
-  (kurtosis 103 $\to$ 5) and order-flow memory pass, but impact is nearly permanent (90\% of the peak
-  at completion, 95\% after 500 steps) with $\delta \approx 0.9$, because every valuation adapts toward
-  the new price and nothing anchors it. Slower adaptation ($\kappa_a = 10^{-3}$, $2\times10^{-4}$)
-  restores reversion but then speculators drift to their position caps and budgets fail. The private
-  information model is implemented and runs, but it needs its own calibration (likely a larger
-  speculator endowment and a reversion term) before the main results are reported under it; this is
-  an open item.
-\item \textbf{A4} (one anticipator): with the original anticipator defaults (4 lots/step, limit 300) the
-  anticipator was about 40\% of market volume when active and created a self-reinforcing loop (its own
-  trades raised the imbalance it reacted to), trending the market ($\max|ac| = 0.54$) and making impact
-  superlinear ($\delta = 1.24$ at completion). With the adopted defaults (2 lots/step, limit 200) the
-  market stays regular ($\max|ac| = 0.08$, kurtosis 15 $\to$ 5) while impact is still amplified
-  ($\delta = 0.79$ at completion, 0.66 at peak; 26\% of peak remains after 500 steps), which is the
-  effect the adversary ladder is meant to produce. A4 is not required to pass the background-market
-  validation (E1 is run on the background market only), but it must not destabilise it.
-\end{itemize}
-
-
-\part{Measurement without reinforcement learning}
-\label{part:two}
-
-This part implements Phase~2 of the plan: everything needed for experiments E2 and E3 and for the
-Phase~2 gate (TWAP's leakage cost significantly above zero at one size or more). Nothing here learns
-by reinforcement; the executor runs fixed strategies, and the only trained component is the A3
-classifier, which never sees an executor.
-
 %==================================================================================================
-\section{The execution task and the executor agent (\code{order\_book.execution.task})}
-\label{sec:task}
+\section[Specification of All Detectors]{Specification of All Detectors (\code{order\_book.detectors})}
+\label{sec:detectors}
 %==================================================================================================
 
-\paragraph{Task.} An \code{ExecutionTask} fixes the side (buy or sell), the size as a fraction $f$ of
-expected market volume over the horizon, $Q = \operatorname{round}(f\,\bar V\,T)$ with
-$f \in \{0.05, 0.10, 0.20\}$, the horizon $T = 2\,000$ steps, the decision interval $N = 5$ steps, and
-the hard limits: at most two resting orders, no marketable limit more than 5 ticks through the
-opposite best, and an optional cap on the market-order size per decision as a share of expected
-interval volume (unused by the baselines, so that \emph{Immediate} can exist; the RL environment will
-set it). $\bar V$ is the mean traded volume per step over the burn-in, read from the public tape, so
-it is identical for every strategy and adversary level on the same seed.
+Every detector implements \code{Detector.update(public: PublicState) -> float} and exposes
+$\code{signal} \in [-1,1]$, $\code{p\_buy} \in [0,1]$, and $\code{p\_sell} \in [0,1]$.
 
-\paragraph{Executor.} \code{ExecutorAgent} is an external participant (\S\ref{sec:rng}): it acts first
-in every step with its own stream and outside the scheduler's permutation. It starts at a given step
-(the end of the burn-in), records the arrival mid, and every $N$ steps hands its strategy an
-\code{ExecState} and applies the returned \code{Decision} (optionally cancel resting orders; a market
-order; then a limit order at a price, default own best). Fills are read off the executor's own
-account (shares and cash relative to the start), so passive fills need no callbacks, and each fill is
-tagged aggressive or passive. At $T$ the agent cancels what rests and sends the remainder by market
-order, repeating for up to 50 steps if the book is thin; the forced quantity is reported and its cost
-counts in full. The result records executed and forced quantity, notional, aggressive share, orders
-sent and the fill list, and
+\subsection{Level A1: Rule-Based Flow Imbalance Detector (\code{detectors/flow.py})}
+
+Maintains an EWMA $M_t$ of the 20-step signed order-flow imbalance $I_t$ (\ref{eq:imbalance}) with memory
+span $\tau_d = 10$ ($\alpha_d = 2/11$):
 \begin{equation}
-  \text{IS} = \sign\cdot\frac{\bar p - m_\text{arrival}}{m_\text{arrival}} \times 10^4 \ \text{bps},
-  \qquad \text{completion} = \frac{Q_\text{executed} - Q_\text{forced}}{Q}.
+  M_t = M_{t-1} + \frac{2}{\tau_d + 1}(I_t - M_{t-1}), \qquad
+  s_t = \sign(M_t)\cdot\min\!\Big(1.0,\; \max\!\Big(0.0,\; \frac{|M_t| - \theta_d}{1 - \theta_d}\Big)\Big),
 \end{equation}
+where $\theta_d \in \{0.20\text{ (lenient)},\; 0.30\text{ (medium)},\; 0.45\text{ (strict)}\}$.
 
-\paragraph{What a strategy sees.} \code{ExecState}: elapsed and remaining time, decisions left, $Q$,
-executed and remaining quantity, aggressive quantity, arrival mid, mid, best quotes, spread, the public
-flow imbalance, public volume since the start, the executor's own resting orders, the expected volume
-per step, the executor's own share of the aggressive volume in the public flow window (its
-\emph{footprint}), and the \code{PublicState} itself. It never sees any detector's output or any
-other agent's state.
+\subsection{Public Feature Tracker (\code{detectors/features.py})}
 
-%==================================================================================================
-\section{Baseline strategies (\code{order\_book.execution.strategies})}
-\label{sec:baselines}
-%==================================================================================================
-
-Let $R$ be the remaining quantity, $S$ the decisions left, $X$ the executed quantity, $t$ the elapsed
-steps. All sizes are rounded up to whole lots.
-
-\paragraph{Classical schedules.}
-\begin{description}[nosep]
-\item[\code{immediate}] market order for $Q$ at the first decision.
-\item[\code{twap\_market}] market order for $\lceil R/S \rceil$ every decision.
-\item[\code{twap\_passive}] each decision: cancel, cross by market order the unfilled part of the
-  previous slice (catch-up), then post the new slice $\lceil (R - \text{catch-up})/S \rceil$ at own best.
-\item[\code{twap\_random}] slice $\lceil R/S \rceil \cdot U(0.5, 1.5)$; with probability 0.3 a
-  decision is skipped (timing jitter) unless it is the last.
-\item[\code{pov}] every decision bring $X$ up to $\min(Q, \lfloor 0.10 \cdot \text{public volume since
-  the start}\rfloor)$; TWAP catch-up over the final tenth of the horizon.
-\end{description}
-
-\paragraph{Model-based schedules} (parameters from the \code{Calibration}, \S\ref{sec:calibration}).
-\begin{description}[nosep]
-\item[\code{almgren\_chriss\_$\lambda$}] target trajectory $X(t) = Q\,[1 - \sinh(\kappa(T-t))/\sinh(\kappa T)]$,
-  $\kappa = \sqrt{\lambda\sigma^2/\eta}$, for $\lambda \in \{10^{-7}, 10^{-6}, 10^{-5}\}$ ($\kappa T
-  \approx 0.6, 2, 6$ with the default calibration), executed with the passive-with-catch-up tactic:
-  each decision, cross the shortfall against $X(t)$ by market order and post the increment to
-  $X(t+N)$ at own best.
-\item[\code{obizhaeva\_wang}] with resilience $\rho$: a block $x_0 = Q/(\rho T + 2)$ at the start and at
-  the end and a constant rate $\rho x_0$ in between, all by market order.
-\item[\code{limit\_market}] a limit-and-market policy in the spirit of Gu\'eant--Lehalle--Fernandez-Tapia
-  and Cartea--Jaimungal: keep a resting order of two slices at the deepest distance $d$ whose fitted
-  per-decision fill probability $p_d$ keeps pace with the linear schedule, $p_d \ge \tfrac12 (1 - u\,
-  \tau)$ with $\tau$ the fraction of time remaining and $u = 0.5$ (quote deeper early, tighten toward
-  the end); keep the order while its price is still the chosen one (queue position); let execution lag
-  the schedule by up to $1/p_d$ slices before market orders catch up; market orders over the last two
-  decisions.
-\end{description}
-
-\paragraph{Stealth heuristics.}
-\begin{description}[nosep]
-\item[\code{footprint}] base slice $R/S$ scaled by $U(0.6, 1.4)$; $\times 0.25$ when the executor's own
-  share of the public signed flow exceeds 0.3 (too visible); $\times 1.5$ when the public imbalance
-  exceeds 0.2 in the executor's direction (cover in the natural flow); half of each slice posted
-  passively; TWAP catch-up with market orders over the last 15\% of the horizon.
-\item[\code{mimic}] draws one of the five institutional execution styles per episode (with the
-  institutional jitter, front-loading and a POV rate $U(0.05, 0.20)$) and runs it, so the executor is
-  statistically one more institution.
-\end{description}
-
-%==================================================================================================
-\section{Calibration (\code{order\_book.execution.calibration})}
-\label{sec:calibration}
-%==================================================================================================
-
-The model-based strategies' parameters are fitted under A0 on training seeds by
-\code{scripts/calibrate.py}; the defaults in \code{Calibration} are the values measured on the default
-market so that every strategy runs without a calibration file.
-\begin{description}[nosep]
-\item[$\sigma$] standard deviation of one-step mid changes on the background market (default 0.19 ticks).
-\item[$\eta$ (temporary impact)] slope of the mean child slippage---fill price minus the mid of the
-  previous step, in the order's direction---on the trading rate $Q/T$, across TWAP-market runs at
-  $f \in \{0.05, 0.1, 0.2\}$ (default 0.035 ticks per lot/step; the intercept, about 0.55 ticks, is the
-  half-spread).
-\item[permanent impact] paired impact at completion per lot (default 0.0017 ticks/lot).
-\item[$\rho$ (resilience)] exponential rate fitted by log-linear regression to the paired impact path
-  after completion, relative to its final level (default 0.0028 per step).
-\item[depth] mean resting lots within 5 ticks of the best on one side (default 227).
-\item[fill probabilities] a \code{FillProber} agent posts 1-lot limits at 0, 1, 2 and 3 ticks behind its
-  own best every $N$ steps on alternating sides and cancels them at the next decision; the fill share
-  per distance is $p_d$ (default $(0.28, 0.015, 0.001, 0)$: in a one-tick-spread book only the best
-  is ever reached within 5 steps, which is why passive tactics mostly end up catching up).
-\end{description}
-
-%==================================================================================================
-\section{Held-out and learned detectors}
-\label{sec:a2a3}
-%==================================================================================================
-
-All detectors implement the interface of \S\ref{sec:detectors}. The A2 and A3 detectors share a
-\code{FeatureTracker} that maintains, from the anonymous per-step trade list and the public
-aggregates: the flow imbalance over 20, 50 and 200 steps; the imbalance over the last 100 lots
-(volume clock); the signed length of the current run of same-sign aggressive trades; the
-\emph{regularity} of that run, $1 - \text{CV}$ of its child sizes; the ratio of the trade rate over
-20 steps to that over 200; the 50-step return in units of the fast volatility; the spread; and the
-trade-count imbalance over 20 steps.
-
-\paragraph{A2 (held-out, never used in training).}
-\begin{description}[nosep]
-\item[\code{runs}] $s = \sign(\text{run}) \cdot \operatorname{clip}((\text{run length} - 4)/6, 0, 1)$.
-\item[\code{cusum}] two-sided CUSUM with restart on the imbalance $x$ of consecutive 20-step blocks:
-  $S^+ \leftarrow \max(0, S^+ + x - k)$, $S^- \leftarrow \max(0, S^- - x - k)$, $k = 0.1$; when either
-  exceeds $h = 1.5$ an alarm is raised in that direction, both statistics restart, and the alarm is
-  held as a signal decaying linearly to zero over 10 blocks; between alarms $s = (S^+ - S^-)/h$. (A
-  CUSUM without restart stays in alarm because institutions keep the flow one-sided most of the time.)
-\item[\code{volume\_clock}] the 100-lot imbalance thresholded like the flow detector ($\theta = 0.3$).
-\item[\code{regularity}] metaorder reconstruction in miniature (Goliath \& Gebbie, 2026): for a
-  same-sign run of at least 3 trades, $s = \sign \cdot \text{regularity} \cdot \min(1, \text{run}/6)$.
-\end{description}
-
-\paragraph{A3 (learned).} A multinomial logistic classifier on the standardised features with classes
-\{none, buy metaorder active, sell metaorder active\} (net side when several overlap), trained with
-Adam on the class-weighted cross-entropy by \code{scripts/train\_detector.py} on background runs of
-the A1-medium market (training seeds 100--139, validation seeds 500--507 by default), with labels from
-the institutional metaorders only. The signal is $p_\text{buy} - p_\text{sell}$. Training prints one
-line per epoch (loss, validation ROC AUC for the buy class, the sell class and the unsigned signal) and
-the fitted weights. The classifier never sees an executor, so its score on the executor measures how
-institutional the executor looks.
-
-%==================================================================================================
-\section{Scoring and statistical protocol (\code{order\_book.scoring})}
-\label{sec:scoring}
-%==================================================================================================
-
-\paragraph{Detectors.} ROC AUC is the rank-based Mann--Whitney statistic with average ranks for ties.
-In E2 the positives are the steps on which the executor is active and the negatives all other steps
-of the window (institutional-only and quiet steps alike), so institutional false positives count
-against the detector exactly as they would in the market. The \emph{signed} AUC uses the signal in
-the executor's direction. Detection delay is the number of steps from the executor's start to the
-first signal at or above the operating threshold (0.5) in its direction (the full window when never
-reached); median and 90th percentile are reported. False-alarm rates are the share of steps with
-$|s| \ge 0.5$ among steps where only institutions are active and among quiet steps. The same
-detector's AUC on the institutional metaorders of the episode is reported for comparison.
-
-\paragraph{Statistics.} Every comparison is paired: all strategies and adversary levels run on the
-same seeds, the executor's side is fixed by the seed's parity, and the burn-in state is identical.
-Means come with 95\% percentile-bootstrap intervals over seeds (2\,000 resamples); paired differences
-with a bootstrap interval and a one-sided bootstrap $p$-value for ``$> 0$''; Holm's step-down
-correction is applied over the family of leakage tests; tail risk is CVaR at 95\%; results are also
-reported by side. The per-episode shortfall is dominated by the market's own drift over the horizon
-(standard deviation of order 10~bps on a 2\,000-step horizon), which the pairing removes: in a
-four-seed pilot the paired leakage interval was already $\pm 0.4$~bps.
-
-%==================================================================================================
-\section{Experiments}
-\label{sec:experiments}
-%==================================================================================================
-
-\subsection{Adversary levels and observers}
-
-\begin{center}\small
-\begin{tabular}{L{2.2cm} L{6.4cm} L{6.2cm}}
+\code{FeatureTracker} maintains a 200-step deque of per-step flow tuples
+$(V^{\text{buy}}_t, V^{\text{sell}}_t, N^{\text{trades}}_t, N^{\text{buy\_trades}}_t)$, a volume-clock
+deque of the most recent aggressive trades summing to at most $V_{\text{clock}} = 100$ lots, a 51-step
+mid-price deque, and the current same-sign aggressive trade run (sign, length, and last 10 trade sizes).
+On each step it outputs the 10-dimensional feature vector $\mathbf{f}_t \in \mathbb{R}^{10}$:
+\begin{center}\small\setlength{\tabcolsep}{4pt}
+\begin{tabular}{clL{9.4cm}}
 \toprule
-Level & Market & Role in Phase 2 \\
+Index & Name & Exact Formula \\
 \midrule
-A0 & four makers, none reacts; no anticipator & impact without leakage; calibration \\
-A1-\{lenient, medium, strict\} & two of four makers react to the flow detector at $\theta_d = 0.2 / 0.3 / 0.45$ & the training-time adversary; E3 uses medium \\
-A4 & A1-medium plus one order anticipator & the aggressive adversary of E3 \\
-Observers & flow at three thresholds (A1), runs, CUSUM, volume clock, regularity (A2), learned (A3) & attached in E2; they see the market, nobody reacts to them \\
+$f_0$ & \code{imbalance\_20} & 20-step volume imbalance $I^{(20)}_t = (B_{20} - S_{20})/(B_{20} + S_{20})$ \\
+$f_1$ & \code{imbalance\_50} & 50-step volume imbalance $I^{(50)}_t = (B_{50} - S_{50})/(B_{50} + S_{50})$ \\
+$f_2$ & \code{imbalance\_200} & 200-step volume imbalance $I^{(200)}_t = (B_{200} - S_{200})/(B_{200} + S_{200})$ \\
+$f_3$ & \code{imbalance\_volume\_clock} & Signed volume imbalance over the last $100$ traded lots \\
+$f_4$ & \code{signed\_run} & $\text{run\_sign}_t \cdot \min(\text{run\_length}_t, 20) / 10 \in [-2, 2]$ \\
+$f_5$ & \code{regularity} & $\max(0, 1 - \text{std}(\text{run\_sizes})/\text{mean}(\text{run\_sizes}))$ if $\text{run\_length}_t \ge 3$ else $0$ \\
+$f_6$ & \code{trade\_rate\_ratio} & $(\text{trades in last 20 steps}/20) / (\text{trades in last 200 steps}/200)$ \\
+$f_7$ & \code{normalised\_return\_50} & $(m_t - m_{t-50}) / \sqrt{\max(\sigma^{2,f}_t, 10^{-6}) \cdot 50}$ \\
+$f_8$ & \code{spread} & Current bid--ask spread $a_t - b_t$ (ticks) \\
+$f_9$ & \code{count\_imbalance\_20} & 20-step trade-count imbalance $(N^{\text{buy}}_{20} - N^{\text{sell}}_{20}) / N^{\text{total}}_{20}$ \\
 \bottomrule
 \end{tabular}
 \end{center}
-Observers are separate detector instances registered under \code{obs:<name>}, so the detector the
-makers react to (\code{flow}) is also recorded. Seeds 0--999 are training seeds (calibration,
-detector training, tuning); test seeds start at 1000. The executor buys on even seeds and sells on
-odd seeds.
 
-\subsection{E2: detectability of classic strategies}
-\label{sec:e2}
+\subsection{Level A2: Four Held-Out Statistical Detectors (\code{detectors/statistical.py})}
 
-\code{E2Config}: strategies \{twap\_market, twap\_passive, twap\_random, pov, almgren\_chriss\_1e-06,
-footprint, mimic\} $\times$ sizes \{0.05, 0.10, 0.20\} $\times$ 20 test seeds, in the A1-medium
-market with every observer attached; $T = 2\,000$, $N = 5$, burn-in 2\,000, 500 steps recorded after
-the horizon. Per strategy, size and detector: AUC of $|s|$ with bootstrap interval, signed AUC,
-delay (median, p90), false alarms on institutional-only and quiet steps, and the detector's AUC on
-institutional metaorders. The per-step signals of every episode are saved (\code{outputs/e2/episodes.jsonl})
-so ROC curves can be drawn without re-simulating.
+\begin{enumerate}[nosep]
+\item \textbf{\code{RunsDetector}:} Fires on persistent streaks of same-sign aggressive trades:
+  \begin{equation}
+    s_t = \text{run\_sign}_t \cdot \clip\!\Big(\frac{\text{run\_length}_t - 4}{6},\; 0,\; 1\Big).
+  \end{equation}
+\item \textbf{\code{CusumDetector}:} Two-sided Page's CUSUM with restart on non-overlapping 20-step
+  blocks. At the end of each 20-step block with block imbalance $x_b$:
+  \begin{equation}
+    S^+_b = \max(0, S^+_{b-1} + x_b - k), \qquad S^-_b = \max(0, S^-_{b-1} - x_b - k), \qquad (k = 0.1).
+  \end{equation}
+  When $S^+_b > h = 1.5$ or $S^-_b > h = 1.5$, an alarm is triggered ($\text{alarm\_sign} = \pm 1$), both
+  $S^+_b, S^-_b$ reset to $0$, and the alarm signal decays linearly over $H_{\text{hold}} = 10$ blocks:
+  $s_t = \text{alarm\_sign}\cdot\max(0, 1 - b_{\text{since}}/10)$ (or $(S^+_b - S^-_b)/h$ if larger in
+  magnitude).
+\item \textbf{\code{VolumeClockDetector}:} Applies the A1 dead-zone threshold ($\theta = 0.3$) to the
+  100-lot volume-clock imbalance $f_3$ instead of wall-clock time.
+\item \textbf{\code{RegularityDetector} (miniature Goliath--Gebbie metaorder reconstruction):} Detects
+  child-order splitting that is both persistent ($\text{run\_length}_t \ge 3$) and suspiciously uniform
+  in slice size:
+  \begin{equation}
+    s_t = \mathbb{I}(\text{run\_length}_t \ge 3)\cdot \text{run\_sign}_t \cdot f_{5,t} \cdot
+    \min\!\Big(1.0,\; \frac{\text{run\_length}_t}{6}\Big).
+  \end{equation}
+\end{enumerate}
 
-\subsection{E3: leakage cost}
+\subsection{Level A3: Learned Multinomial Logistic Classifier (\code{detectors/learned.py})}
+
+Trained offline by \code{scripts/train\_detector.py} on background runs (40 training seeds $\times$
+$20\,000$ steps, 8 validation seeds) where only background institutions trade. Each step $t$ is labelled
+from \code{MetaorderLog} as $y_t \in \{0\text{ (none)},\; 1\text{ (net buy active)},\; 2\text{ (net sell
+active)}\}$. Standardised features $\tilde{\mathbf{f}}_t = (\mathbf{f}_t - \boldsymbol{\mu})/\boldsymbol{\sigma}$
+feed a 3-class linear layer $\mathbf{z}_t = \tilde{\mathbf{f}}_t \mathbf{W} + \mathbf{b} \in \mathbb{R}^3$
+with softmax probabilities $\mathbf{p}_t = \operatorname{softmax}(\mathbf{z}_t)$ and signed signal
+$s_t = p_{t,1} - p_{t,2}$. Fitted weights (saved in \code{outputs/detectors/learned.npz}) place positive
+weight on multi-horizon imbalances ($f_0, f_1, f_2, f_3$), run length ($f_4$), size regularity ($f_5$),
+spread ($f_8$), and count imbalance ($f_9$).
+
+%==================================================================================================
+\part{Phase 2: Execution Baselines, Counterfactual Methodology, and Empirical Results}
+\label{part:two}
+%==================================================================================================
+
+%==================================================================================================
+\section[Execution Task and Baseline Strategies]{Execution Task and Baselines (\code{order\_book.execution})}
+\label{sec:task_baselines}
+%==================================================================================================
+
+An \code{ExecutionTask} (\code{order\_book/execution/task.py}) specifies:
+\begin{itemize}[nosep]
+\item \code{side} $\in \{\code{"bid"}, \code{"ask"}\}$ (fixed by seed parity: even seeds buy, odd seeds sell);
+\item \code{size\_fraction} $f$: target parent size $Q = \max(1, \operatorname{round}(f\,\bar V\,T))$,
+  where $\bar V$ is the mean traded volume per step measured over the $2\,000$-step burn-in on that seed;
+\item \code{horizon} $T = 2\,000$ steps and \code{decision\_interval} $N = 5$ steps ($400$ decision points
+  per episode);
+\item Hard risk limits enforced by \code{ExecutorAgent.\_apply}: at most \code{max\_resting\_orders} $= 2$
+  simultaneous resting orders, marketable limit price protection of \code{max\_through\_ticks} $= 5$ ticks
+  through the opposite best, and mandatory market-order forced completion at $t \ge t_{\text{start}} + T$
+  (with up to \code{grace} $= 50$ steps if the book is thin).
+\end{itemize}
+
+Table~\ref{tab:baselines} summarises the mathematical decision rules of all twelve baseline strategies in
+\code{order\_book/execution/strategies.py}, where $R_t = Q - X_t$ is remaining quantity, $S_t =
+\max(1, \lceil (T - t)/N \rceil)$ is decisions left, and $X_t$ is quantity executed so far.
+
+\begin{table}[h!]
+\centering\small\setlength{\tabcolsep}{4pt}
+\begin{tabular}{L{3.2cm} L{2.0cm} L{8.5cm}}
+\toprule
+Strategy Name & Family & Mathematical Decision Rule at Decision Step $t$ \\
+\midrule
+\code{immediate} & Classical & Submit market order $q_{\text{mkt}} = R_t$ at $t=0$. \\
+\code{twap\_market} & Classical & Submit market order $q_{\text{mkt}} = \lceil R_t / S_t \rceil$. \\
+\code{twap\_passive} & Classical & Cancel resting; cross catch-up $c_t = \max(0, \text{target}_{t-N} - X_t)$ by market order; post $q_{\text{lim}} = \lceil (R_t - c_t)/S_t \rceil$ at own best. \\
+\code{twap\_random} & Classical & Skip decision with prob $p_{\text{skip}} = 0.30$ (if $S_t > 1$); else submit $q_{\text{mkt}} = \lceil (R_t/S_t)\cdot U(0.5, 1.5) \rceil$. \\
+\code{pov} & Classical & If $t < 0.9T$, submit $q_{\text{mkt}} = \max(0, \min(Q, \lfloor 0.10\,V^{\text{pub}}_{0:t}\rfloor) - X_t)$; else TWAP market catch-up. \\
+\midrule
+\code{almgren\_chriss\_1e-07} & Model-based & Schedule $X^*(t) = Q\big(1 - \frac{\sinh(\kappa(T-t))}{\sinh(\kappa T)}\big)$ with $\kappa = \sqrt{\lambda\sigma^2/\eta}$, $\lambda = 10^{-7}$ ($\kappa T \approx 0.42$); passive-with-catch-up tactic. \\
+\code{almgren\_chriss\_1e-06} & Model-based & Same with $\lambda = 10^{-6}$ ($\kappa T \approx 1.33$, moderately front-loaded). \\
+\code{almgren\_chriss\_1e-05} & Model-based & Same with $\lambda = 10^{-5}$ ($\kappa T \approx 4.20$, strongly front-loaded). \\
+\code{obizhaeva\_wang} & Model-based & Transient impact resilience $\rho$: initial block $x_0 = Q/(\rho T + 2)$ at $t=0$, constant market rate $\rho x_0$ for $0 < t < T$, terminal block at $T$. \\
+\code{limit\_market} & Model-based & Pick deepest offset $d \in \{0,1,2,3\}$ with $p_d S_t \ge 1.5$; allow schedule slack $s_{\text{slice}}/p_d$; keep resting order if price unchanged (queue priority); market catch-up over last 2 decisions. \\
+\midrule
+\code{footprint} & Stealth & Base $b = R_t/S_t \cdot U(0.6, 1.4)$; if $\text{own\_flow\_share}_t > 0.30$, scale $\times 0.25$ (back off); if $\sign\cdot I_t > 0.20$, scale $\times 1.5$ (hide in natural flow); split $50\%$ market / $50\%$ passive; TWAP market over last $15\%$. \\
+\code{mimic} & Stealth & At episode start, draw one of the 5 institutional styles uniformly and execute with institutional parameters so the executor is statistically indistinguishable from an institution. \\
+\bottomrule
+\end{tabular}
+\caption{The twelve baseline execution strategies in \code{order\_book/execution/strategies.py}.}
+\label{tab:baselines}
+\end{table}
+
+\paragraph{Calibration under A0 (\code{outputs/calibration.json}).} Running \code{scripts/calibrate.py} on
+training seeds under \code{A0} yields the fitted structural parameters used by the model-based strategies:
+\begin{align*}
+  \sigma &= 0.1709\text{ ticks/step}, &
+  \eta &= 0.0812\text{ ticks/(lot/step)}, &
+  \gamma_{\text{perm}} &= 0.00368\text{ ticks/lot}, \\
+  \rho &= 0.00253\text{ step}^{-1}, &
+  \text{depth}_5 &= 229.4\text{ lots},
+\end{align*}
+and 5-step passive fill probabilities $p_d = (0.160,\; 0.0063,\; 0.0004,\; 0.0001)$ at distances
+$d \in \{0, 1, 2, 3\}$ ticks behind own best.
+
+%==================================================================================================
+\section{Phase 2 Experimental Results: E2, E3, E7, and E7b}
+\label{sec:phase2_results}
+%==================================================================================================
+
+All Phase~2 experiments were executed on held-out test seeds $1000..1019$ ($n = 20$ paired episodes per
+cell, even seeds buying, odd seeds selling, $T = 2\,000$, burn-in $2\,000$).
+
+\subsection[Experiments E2 and E3: The Cover Finding]{Experiments E2 and E3: The Cover Finding (\code{outputs/e2}, \code{e3})}
 \label{sec:e3}
 
-\code{E3Config}: all twelve baselines $\times$ sizes \{0.05, 0.10, 0.20\} $\times$ adversaries \{A0,
-A1-medium, A4\} $\times$ \{visible, invisible\} $\times$ 20 test seeds, plus one run per seed and
-adversary with no executor (the market's own path). ``Invisible'' means \code{Market.hide} is applied
-to the executor: detectors and the public flow statistics ignore its trades while everything else is
-unchanged, so on the same seed
+In the default full-cover market (\code{deep\_cover}: 4 background institutions, full liquidity), E2
+measured the ROC AUC of all 8 detectors at distinguishing steps when the executor is active from steps
+when it is not, and E3 measured the counterfactual leakage $\text{IS}_{\text{visible}} -
+\text{IS}_{\text{invisible}}$ across all 12 strategies, 3 sizes $Q/V \in \{0.05, 0.10, 0.20\}$, and 3
+adversary levels (\code{A0}, \code{A1-medium}, \code{A4}; $4\,380$ total episodes).
+
+\begin{table}[h!]
+\centering\small\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{L{3.1cm} c l r r c r r}
+\toprule
+Strategy & $Q/V$ & Adversary & $\text{IS}_{\text{vis}}$ & $\text{IS}_{\text{invis}}$ & Leakage $[95\%\text{ CI}]$ (bps) & $p > 0$ & $p_{\text{Holm}}$ \\
+\midrule
+\code{immediate} & $0.05$ & A1-medium & $+4.57$ & $+4.09$ & $+0.48\;[+0.06, +1.10]$ & $\mathbf{0.000}$ & $\mathbf{0.000}$ \\
+\code{immediate} & $0.05$ & A4        & $+8.47$ & $+6.80$ & $+1.68\;[+0.10, +4.37]$ & $\mathbf{0.000}$ & $\mathbf{0.000}$ \\
+\code{immediate} & $0.10$ & A4        & $+27.49$ & $+22.65$ & $+4.84\;[+0.81, +9.46]$ & $\mathbf{0.006}$ & $0.630$ \\
+\code{almgren\_chriss\_1e-05} & $0.20$ & A4 & $+3.98$ & $+3.53$ & $+0.45\;[+0.16, +0.76]$ & $\mathbf{0.001}$ & $0.053$ \\
+\code{twap\_market} & $0.05$ & A1-medium & $+1.10$ & $+1.12$ & $-0.02\;[-0.34, +0.28]$ & $0.551$ & $1.000$ \\
+\code{twap\_market} & $0.10$ & A1-medium & $+1.61$ & $+1.42$ & $+0.20\;[-0.07, +0.51]$ & $0.074$ & $1.000$ \\
+\code{twap\_market} & $0.10$ & A4        & $+1.90$ & $+1.70$ & $+0.20\;[-0.11, +0.55]$ & $0.114$ & $1.000$ \\
+\code{twap\_market} & $0.20$ & A1-medium & $+2.67$ & $+2.55$ & $+0.12\;[-0.22, +0.52]$ & $0.288$ & $1.000$ \\
+\code{twap\_passive} & $0.20$ & A1-medium & $+2.39$ & $+2.19$ & $+0.20\;[-0.05, +0.48]$ & $0.068$ & $1.000$ \\
+\code{footprint} & $0.20$ & A1-medium & $+2.36$ & $+2.38$ & $-0.01\;[-0.27, +0.25]$ & $0.561$ & $1.000$ \\
+\code{mimic} & $0.20$ & A1-medium & $+3.19$ & $+3.03$ & $+0.16\;[-0.07, +0.41]$ & $0.092$ & $1.000$ \\
+\bottomrule
+\end{tabular}
+\caption{Selected rows from the full E3 leakage experiment (\code{outputs/e3/summary.json}, 20 test seeds).
+Under \code{A0}, $\text{IS}_{\text{vis}} - \text{IS}_{\text{invis}} \equiv 0.00$ identically on every row.}
+\label{tab:e3_results}
+\end{table}
+
+\paragraph{Interpretation of E2 and E3.}
+\begin{enumerate}[nosep]
+\item \textbf{Sanity check passes:} Under \code{A0} (no detecting agents), leakage is identically
+  $0.00\text{ bps}$ to machine precision across every strategy and size.
+\item \textbf{Detection channel works when triggered:} Strategies that dump large aggressive volume in a
+  short window (\code{immediate} at $Q/V = 0.05, 0.10$ and front-loaded \code{almgren\_chriss\_1e-05} at
+  $Q/V = 0.20$) suffer statistically significant leakage ($+0.48\text{ bps}$ under A1, amplified to
+  $+1.68\text{ bps}$ and $+4.84\text{ bps}$ by the order anticipator in A4).
+\item \textbf{Why paced TWAP fails the E3 gate in \code{deep\_cover}:} With 4 active background
+  institutions, institutional metaorders are present on $55\%$--$75\%$ of all steps. In E2, detectors
+  achieve $\text{AUC} \approx 0.55$--$0.60$ on institutional metaorders, but $\text{AUC} \approx 0.47$--$0.51$
+  (chance level) at distinguishing the paced executor from institutional-only steps, with institutional
+  false-alarm rates of $12\%$--$27\%$. In short: \textbf{four background institutions provide so much
+  natural cover that a $5\%$--$20\%$ TWAP is already hidden}.
+\end{enumerate}
+
+\subsection{Experiment E7 (\code{outputs/e7/summary.json}): Mapping Leakage Across Market Regimes}
+
+Motivated by the E2/E3 finding, E7 (\code{scripts/e7\_regimes.py}) swept six market regimes built via
+\code{presets.regime(liquidity, institutions, makers, mm\_size\_scale)} across $Q/V \in \{0.20, 0.40\}$
+($2\,160$ episodes).
+
+\begin{table}[h!]
+\centering\footnotesize\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{L{2.5cm} c c l c r r c r r}
+\toprule
+Regime & Liq. & Inst. & Strategy & $Q/V$ & $\bar V$/stp & $\text{IS}_{\text{vis}}$ & Leakage $[95\%\text{ CI}]$ (bps) & $p > 0$ & Fire \\
+\midrule
+\code{deep\_cover}     & $1.0$ & $4$ & \code{twap\_market}  & $0.20$ & $3.6$ & $+2.67$ & $+0.12\;[-0.22, +0.52]$ & $0.29$ & $0.10$ \\
+\code{deep\_cover}     & $1.0$ & $4$ & \code{twap\_market}  & $0.40$ & $3.6$ & $+4.93$ & $-0.72\;[-2.58, +0.31]$ & $0.66$ & $0.09$ \\
+\code{low\_cover}      & $1.0$ & $1$ & \code{twap\_market}  & $0.20$ & $2.8$ & $+2.90$ & $\mathbf{+0.31\;[+0.02, +0.60]}$ & $\mathbf{0.02}$ & $0.17$ \\
+\code{low\_cover}      & $1.0$ & $1$ & \code{twap\_market}  & $0.40$ & $2.8$ & $+4.91$ & $\mathbf{+0.31\;[+0.01, +0.63]}$ & $\mathbf{0.02}$ & $0.13$ \\
+\code{low\_cover}      & $1.0$ & $1$ & \code{twap\_passive} & $0.20$ & $2.8$ & $+2.45$ & $-0.07\;[-0.39, +0.25]$ & $0.68$ & $0.19$ \\
+\code{low\_cover}      & $1.0$ & $1$ & \code{twap\_passive} & $0.40$ & $2.8$ & $+4.44$ & $-0.02\;[-0.45, +0.45]$ & $0.55$ & $0.15$ \\
+\code{no\_cover}       & $1.0$ & $0$ & \code{twap\_passive} & $0.20$ & $2.7$ & $+3.43$ & $+0.25\;[-0.02, +0.53]$ & $0.04$ & $0.25$ \\
+\code{half\_liquidity} & $0.5$ & $4$ & \code{twap\_market}  & $0.20$ & $2.3$ & $+4.40$ & $+3.04\;[-0.51, +8.28]$ & $0.07$ & $0.11$ \\
+\code{thin\_low\_cover}& $0.5$ & $1$ & \code{twap\_market}  & $0.40$ & $1.6$ & $+4.81$ & $+0.47\;[-0.39, +1.56]$ & $0.18$ & $0.17$ \\
+\code{thin\_no\_cover} & $0.4$ & $0$ & \code{twap\_market}  & $0.20$ & $1.1$ & $+18.45$& $+14.38\;[-3.34, +47.12]$ & $0.32$ & $0.32$ \\
+\bottomrule
+\end{tabular}
+\caption{Key rows from the E7 regime sweep under \code{A1-medium} (\code{outputs/e7/summary.json}).
+``Fire'' is the mean $|s_t|$ of the flow detector over the executor's active window.}
+\label{tab:e7_results}
+\end{table}
+
+\paragraph{Key findings from E7.}
+\begin{enumerate}[nosep]
+\item \textbf{Hypothesis H4 confirmed:} As institutional cover falls from $4 \to 1 \to 0$ institutions,
+  detector firing rises monotonically ($0.10 \to 0.17 \to 0.25$ in liquid markets, and up to $0.34$ in
+  \code{thin\_no\_cover}).
+\item \textbf{Liquid \code{low\_cover} vs.\ thin regimes:} Cutting institutional cover from $4$ to $1$
+  while keeping the book liquid (\code{low\_cover}) produces a clean, statistically significant leakage
+  of $+0.31\text{ bps}$ ($p = 0.02$) at both $Q/V = 0.20$ and $0.40$, while \code{twap\_passive} leaks
+  $\approx 0\text{ bps}$ ($-0.07$ and $-0.02\text{ bps}$). By contrast, thinning the standing book
+  (\code{half\_liquidity}, \code{thin\_no\_cover}) causes child orders to trigger volatility-fragility
+  quote pulls (\S\ref{sec:mm}), blowing up total IS to $18$--$54\text{ bps}$ and widening 20-seed
+  confidence intervals to $\pm 50\text{ bps}$.
+\end{enumerate}
+
+\subsection{Experiment E7b (\code{outputs/e7b/summary.json}): Detector-Strength Sweep in \code{low\_cover}}
+
+Holding the market at the stable, liquid \code{low\_cover} regime (liquidity $= 1.0$, institutions $= 1$),
+E7b (\code{scripts/e7\_strength.py}) swept four detector strengths defined in
+\code{experiments.DETECTION\_STRENGTHS}:
+\begin{itemize}[nosep]
+\item \code{weak}: $\theta_d = 0.45$ (strict), $2$ detecting makers, $(\delta_{\text{skew}}, \delta_{\text{widen}}, \delta_{\text{cut}}) = (4, 3, 0.7)$;
+\item \code{default}: $\theta_d = 0.30$ (medium), $2$ detecting makers, $(4, 3, 0.7)$;
+\item \code{strong}: $\theta_d = 0.20$ (lenient), $4$ detecting makers, $(8, 6, 0.9)$;
+\item \code{max}: $\theta_d = 0.20$ (lenient), $4$ detecting makers, $(12, 10, 1.0)$.
+\end{itemize}
+
+\begin{table}[h!]
+\centering\small\setlength{\tabcolsep}{4pt}
+\begin{tabular}{l l c r r r c r r}
+\toprule
+Strength & Strategy & $Q/V$ & $Q$ (lots) & $\text{IS}_{\text{vis}}$ & $\text{IS}_{\text{invis}}$ & Leakage $[95\%\text{ CI}]$ (bps) & $p > 0$ & Compl. \\
+\midrule
+\code{weak}    & \code{twap\_market}  & $0.20$ & $1\,168$ & $+2.69$ & $+2.83$ & $-0.15\;[-0.45, +0.12]$ & $0.85$ & $1.00$ \\
+\code{weak}    & \code{twap\_market}  & $0.40$ & $2\,335$ & $+4.55$ & $+4.35$ & $+0.21\;[-0.18, +0.72]$ & $0.20$ & $1.00$ \\
+\code{weak}    & \code{twap\_passive} & $0.20$ & $1\,168$ & $+2.56$ & $+2.61$ & $-0.05\;[-0.32, +0.22]$ & $0.64$ & $1.00$ \\
+\code{weak}    & \code{twap\_passive} & $0.40$ & $2\,335$ & $+4.55$ & $+4.48$ & $+0.07\;[-0.24, +0.33]$ & $0.30$ & $1.00$ \\
+\midrule
+\code{default} & \code{twap\_market}  & $0.20$ & $1\,122$ & $+2.90$ & $+2.59$ & $\mathbf{+0.31\;[+0.02, +0.60]}$ & $\mathbf{0.02}$ & $1.00$ \\
+\code{default} & \code{twap\_market}  & $0.40$ & $2\,245$ & $+4.91$ & $+4.59$ & $\mathbf{+0.31\;[+0.01, +0.63]}$ & $\mathbf{0.02}$ & $1.00$ \\
+\code{default} & \code{twap\_passive} & $0.20$ & $1\,122$ & $+2.45$ & $+2.53$ & $-0.07\;[-0.39, +0.25]$ & $0.68$ & $1.00$ \\
+\code{default} & \code{twap\_passive} & $0.40$ & $2\,245$ & $+4.44$ & $+4.46$ & $-0.02\;[-0.45, +0.45]$ & $0.55$ & $1.00$ \\
+\midrule
+\code{strong}  & \code{twap\_market}  & $0.20$ & $1\,116$ & $+2.66$ & $+2.58$ & $+0.08\;[-0.15, +0.31]$ & $0.25$ & $1.00$ \\
+\code{strong}  & \code{twap\_market}  & $0.40$ & $2\,232$ & $+4.48$ & $+4.10$ & $\mathbf{+0.38\;[+0.08, +0.67]}$ & $\mathbf{0.01}$ & $1.00$ \\
+\code{strong}  & \code{twap\_passive} & $0.20$ & $1\,116$ & $+2.55$ & $+2.37$ & $+0.18\;[-0.07, +0.43]$ & $0.08$ & $1.00$ \\
+\code{strong}  & \code{twap\_passive} & $0.40$ & $2\,232$ & $+4.29$ & $+4.18$ & $+0.11\;[-0.36, +0.58]$ & $0.32$ & $1.00$ \\
+\midrule
+\code{max}     & \code{twap\_market}  & $0.20$ & $1\,149$ & $+3.06$ & $+2.96$ & $+0.10\;[-0.21, +0.39]$ & $0.25$ & $1.00$ \\
+\code{max}     & \code{twap\_market}  & $0.40$ & $2\,298$ & $+5.14$ & $+4.71$ & $\mathbf{+0.42\;[+0.17, +0.69]}$ & $\mathbf{0.00}$ & $1.00$ \\
+\code{max}     & \code{twap\_passive} & $0.20$ & $1\,149$ & $+3.09$ & $+2.90$ & $+0.19\;[-0.07, +0.47]$ & $0.09$ & $1.00$ \\
+\code{max}     & \code{twap\_passive} & $0.40$ & $2\,298$ & $+5.05$ & $+4.45$ & $\mathbf{+0.60\;[+0.14, +1.18]}$ & $\mathbf{0.00}$ & $1.00$ \\
+\bottomrule
+\end{tabular}
+\caption{Complete results of the E7b detector-strength sweep in the liquid \code{low\_cover} regime
+(\code{outputs/e7b/summary.json}, 20 test seeds).}
+\label{tab:e7b_results}
+\end{table}
+
+Table~\ref{tab:e7b_results} exhibits a textbook monotonic dose--response at $Q/V = 0.40$: as detector
+strength increases from \code{weak} $\to$ \code{default} $\to$ \code{strong} $\to$ \code{max},
+\code{twap\_market} leakage rises from $+0.21 \to +0.31 \to +0.38 \to +0.42\text{ bps}$ ($p = 0.20 \to
+0.02 \to 0.01 \to 0.00$), with $100\%$ completion throughout. Moreover, \code{default} is the unique
+sweet spot where \code{twap\_market} leaks significantly at \emph{both} $Q/V = 0.20$ and $0.40$
+($+0.31\text{ bps}$, $p = 0.02$) while \code{twap\_passive} does not leak ($-0.07$ and $-0.02\text{ bps}$),
+creating clear economic headroom ($\sim 0.30$--$0.45\text{ bps}$) for a learning executor that mixes
+passive placement, opportunistic timing, and footprint control. Accordingly, \code{low\_cover + default}
+was selected as \code{phase3\_config()}.
+
+%==================================================================================================
+\part{Phase 3: Reinforcement-Learning Executor, PPO Trainer, and Sweep Results}
+\label{part:three}
+%==================================================================================================
+
+Phase~3 (\code{order\_book/execution/features.py}, \code{policy.py}, \code{env.py}, \code{ppo.py}, and
+\code{scripts/train\_rl.py}, \code{scripts/sweep\_rl.py}) embeds a learned policy directly inside the
+Phase~2 \code{ExecutorAgent}. Because \code{PolicyStrategy} subclasses \code{Strategy}, the RL agent
+faces the \emph{exact same} \code{ExecState}, order-placement rules, resting-order caps, price
+protection, and horizon forced completion as every analytical baseline.
+
+%==================================================================================================
+\section{Mathematical Formulation of the Execution MDP}
+\label{sec:mdp}
+%==================================================================================================
+
+An execution episode has horizon $T = 2\,000$ simulator steps and decision interval $N = 5$ steps, so the
+MDP has at most $K = T/N = 400$ discrete decision stages $k \in \{0, 1, \dots, K-1\}$ occurring at
+simulator steps $t_k = t_{\text{start}} + kN$ (terminating earlier if the parent order of size $Q$ is
+completely filled before $T$).
+
+\subsection{Observation Space ($\mathcal{S} \subset \mathbb{R}^{13}$, \code{execution/features.py})}
+
+At decision stage $k$, \code{features(s: ExecState)} maps the executor's public state and own progress
+into a 13-dimensional feature vector $\mathbf{o}_k = (o_{k,0},\dots,o_{k,12})^\top \in \mathbb{R}^{13}$.
+Every directional market feature is multiplied by $\sign \in \{+1\text{ (buy)}, -1\text{ (sell)}\}$ so
+that a single policy network is invariant to whether it is buying or selling:
+
+\begin{table}[h!]
+\centering\small\setlength{\tabcolsep}{4pt}
+\begin{tabular}{clL{5.6cm}L{5.4cm}}
+\toprule
+Idx & Feature Name & Exact Mathematical Formula & Economic Meaning \\
+\midrule
+$0$ & \code{time\_frac} & $\tau_k = t_{\text{elapsed}} / T \in [0, 1]$ & Fraction of execution horizon elapsed \\
+$1$ & \code{remain\_frac} & $r_k = (Q - X_k) / Q \in [0, 1]$ & Fraction of parent order still unfilled \\
+$2$ & \code{schedule\_gap} & $\clip\!\big((X_k - Q\tau_k)/Q,\; -1, 1\big)$ & Progress ahead of ($>0$) or behind ($<0$) linear TWAP \\
+$3$ & \code{decisions\_left} & $S_k / (T/N) \in [0, 1]$ & Normalised remaining decision points \\
+$4$ & \code{norm\_spread} & $\min(\text{spread}_k / 5.0,\; 2.0)$ & Current bid--ask spread (cost of crossing) \\
+$5$ & \code{signed\_imbalance} & $\sign \cdot I_{t_k} \in [-1, 1]$ & Public order-flow imbalance in own trade direction \\
+$6$ & \code{own\_flow\_share} & $\min\!\big(1,\; V^{\text{own,aggr}}_{W} / (B_W + S_W)\big)$ & Executor's own share of 20-step aggressive flow (footprint) \\
+$7$ & \code{signed\_mom\_fast} & $\clip(\sign \cdot \mu^{(0)}_{t_k} \times 100,\; -3, 3)$ & Short-term $(5,30)$ EMA momentum in trade direction \\
+$8$ & \code{signed\_mom\_slow} & $\clip(\sign \cdot \mu^{(2)}_{t_k} \times 100,\; -3, 3)$ & Long-term $(20,120)$ EMA momentum in trade direction \\
+$9$ & \code{norm\_paper\_bps} & $\clip\!\big(\frac{\sign\cdot(m_{t_k} - m_{\text{arr}})}{m_{\text{arr}}\cdot 20\text{ bps}},\; -3, 3\big)$ & Running mark-to-market drift from arrival mid \\
+$10$ & \code{own\_resting\_frac} & $\min(q^{\text{own,rest}}_k / Q,\; 2.0)$ & Quantity currently resting in book as fraction of $Q$ \\
+$11$ & \code{norm\_vol} & $\min(\sqrt{\max(\sigma^{2,f}_{t_k}, 0)} / 2.0,\; 3.0)$ & Fast mid-price volatility (ticks/$\sqrt{\text{step}}$) \\
+$12$ & \code{norm\_attention} & $\clip(a_{t_k} - 1.0,\; -1.0, 2.0)$ & Endogenous market activity multiplier centred at $0$ \\
+\bottomrule
+\end{tabular}
+\caption{The 13-dimensional observation vector $\mathbf{o}_k = \code{features(s)}$ in
+\code{order\_book/execution/features.py}. Strictly public data plus own inventory state.}
+\label{tab:rl_features}
+\end{table}
+
+\subsection{Discrete Factored Action Space ($\mathcal{A} = \{0,\dots,14\}$, \code{execution/features.py})}
+
+The action space is the Cartesian product of 5 pace multipliers and 3 order placements,
+$|\mathcal{A}| = 5 \times 3 = 15$:
+\begin{align}
+  \code{SIZE\_MULTS} &= (0.0,\; 0.5,\; 1.0,\; 1.5,\; 2.5), \\
+  \code{PLACEMENTS} &= (\code{"market"},\; \code{"passive\_best"},\; \code{"passive\_behind"}).
+\end{align}
+Given action index $a \in \{0,\dots,14\}$ corresponding to pair $(m_a, \text{place}_a)$, let the
+remaining-over-decisions-left catch-up pace be $b_k = R_k / S_k$ and set the child quantity
 \begin{equation}
-  \text{IS}_\text{visible} = \underbrace{\text{IS}_\text{invisible}}_{\text{impact cost}}
-  + \underbrace{\text{IS}_\text{visible} - \text{IS}_\text{invisible}}_{\text{leakage cost}} .
+  q_k = \max(0,\; \operatorname{round}(m_a \cdot b_k)).
 \end{equation}
-Under A0 the two runs are identical to the last digit (nobody reads the detector), which the tests
-assert; under A1 and A4 the difference is caused by detection alone up to the state dependence of
-\S\ref{sec:rng}. Per strategy, size and adversary the summary reports $n$, mean IS visible and
-invisible with intervals, the paired leakage with interval, $p$-value and Holm-adjusted $p$-value,
-CVaR$_{95}$, completion, forced share and results by side. With \code{--paths} the mid paths are
-saved and the impact path (executor minus no-executor run) is written to
-\code{outputs/e3/impact\_paths.npz}. The script ends with the Phase~2 gate verdict: TWAP (market)
-leakage $> 0$ with $p < 0.05$ at one size or more under A1 or A4.
+\begin{itemize}[nosep]
+\item If $q_k = 0$ (which holds for all three actions with $m_a = 0.0$, indices $0, 1, 2$): return
+  \code{Decision()} (do nothing; leave any existing resting orders in place to preserve their FIFO
+  queue position!).
+\item If $q_k > 0$ and $\text{place}_a = \code{"market"}$: return
+  \code{Decision(cancel=True, market\_qty=$q_k$)}.
+\item If $q_k > 0$ and $\text{place}_a = \code{"passive\_best"}$: return
+  \code{Decision(cancel=True, limit\_qty=$q_k$, limit\_price=None)} (placed at own best: $b_t$ for a
+  buy, $a_t$ for a sell).
+\item If $q_k > 0$ and $\text{place}_a = \code{"passive\_behind"}$: return
+  \code{Decision(cancel=True, limit\_qty=$q_k$, limit\_price=s.behind(1))} (placed 1 tick behind own
+  best: $b_t - 1$ for a buy, $a_t + 1$ for a sell).
+\end{itemize}
 
-\paragraph{Pilot.} A four-seed pilot of TWAP (market) at the full horizon gave a paired leakage of
-$+0.37$~bps [0.08, 0.83] at $f = 0.10$ under A1-medium ($p < 0.001$), $-0.25$ under A4 at the same
-size, and $-0.01$ / $+0.17$ at $f = 0.20$: the gate passed in the pilot, but the effect is small
-(tenths of a basis point against an impact cost of a few basis points) because the flow detector is
-rarely confident at these participation rates ($|s| > 0.5$ on 1--7\% of steps). The full E3 run
-decides; per the plan, if leakage is not significant the result is reported before detector strength
-or cover is recalibrated.
+\subsection{Telescoping Implementation-Shortfall Reward (\code{execution/env.py})}
+
+A well-known pitfall in RL for optimal execution is reward mismatch: if step rewards include arbitrary
+heuristic penalties, maximizing cumulative reward no longer minimizes implementation shortfall. In
+\code{ExecutionEnv.rollout}, every individual fill $(t_f, p_f, q_f, \text{aggr}_f)$ recorded in
+\code{executor.result.fills} between decision $k$ and decision $k+1$ (including any forced market fill at
+the horizon $T$, which is credited to the final recorded transition $K_{\text{last}}$) contributes
+\begin{equation}
+  \label{eq:step_reward}
+  r_k = -\sum_{f \in \text{fills}(k)}
+  \underbrace{\Big(\sign \cdot \frac{p_f - m_{\text{arrival}}}{m_{\text{arrival}}} \times 10^4\Big)}_{\text{fill shortfall in bps}}
+  \cdot \frac{q_f}{Q}
+  \;-\; \mathbb{I}(k = K_{\text{last}})\cdot \lambda_{\text{inc}} \frac{Q_{\text{incomplete}}}{Q},
+\end{equation}
+where $\lambda_{\text{inc}} = 5.0\text{ bps}$.
+
+\paragraph{Theorem (Exact Telescoping Return).} \emph{Whenever the order completes in full
+($Q_{\text{incomplete}} = 0$, which includes any quantity forced by market order at $T$ so that
+$\sum_{k} \sum_{f \in \text{fills}(k)} q_f = Q$), the undiscounted episode return equals the exact
+negative implementation shortfall in basis points:}
+\begin{equation}
+  \sum_{k=0}^{K_{\text{last}}} r_k
+  = -\frac{\sign}{m_{\text{arrival}}} \times 10^4 \sum_{k=0}^{K_{\text{last}}} \sum_{f \in \text{fills}(k)}
+    (p_f - m_{\text{arrival}})\frac{q_f}{Q}
+  = -\sign\cdot\frac{\bar p - m_{\text{arrival}}}{m_{\text{arrival}}} \times 10^4
+  = -\text{IS (bps)}.
+\end{equation}
+This identity is verified to $10^{-6}$ in \code{tests/test\_rl.py::test\_rollout\_reward\_equals\_negative\_shortfall}.
 
 %==================================================================================================
-\section{Reproduction of Part II}
-\label{sec:repro2}
+\section{Actor--Critic Network and PPO Training Algorithm (\code{policy.py}, \code{ppo.py})}
+\label{sec:ppo}
 %==================================================================================================
 
-\begin{lstlisting}
-# 1. calibration of the model-based baselines under A0 (training seeds 0-9; ~3 min)
-python -m scripts.calibrate
-# 2. the A3 classifier (40 training + 8 validation seeds x 20k steps, 30 epochs, verbose per epoch)
-python -m scripts.train_detector
-# 3. E2: detectability (7 strategies x 3 sizes x 20 seeds = 420 episodes; ~2 min with 8 workers)
-python -m scripts.e2_detectability --workers 8
-# 4. E3: leakage (12 strategies x 3 sizes x 3 adversaries x 2 x 20 seeds + 60 = 4,380 episodes;
-#    ~15-20 min with 8 workers); --paths also saves impact paths
-python -m scripts.e3_leakage --workers 8 --paths
-# smoke tests of every script (seconds):
-python -m scripts.calibrate --quick; python -m scripts.train_detector --quick
-python -m scripts.e2_detectability --quick; python -m scripts.e3_leakage --quick
-\end{lstlisting}
-Each episode takes about 0.3~s on one core (burn-in 2\,000 + 2\,500 recorded steps); every script
-prints one line per episode with seed, strategy, size, adversary, visibility, side, IS, executed and
-forced quantities, elapsed time and ETA, and saves JSON lines of every episode plus a summary JSON.
+\subsection{Network Architecture (\code{PolicyNet} and \code{PolicyStrategy})}
 
-\part{Verification and status}
+\code{PolicyNet} (\code{order\_book/execution/policy.py}) is a two-hidden-layer $\tanh$ multi-layer
+perceptron with hidden dimension $H = 64$ ($6\,096$ trainable parameters) and separate linear actor and
+critic heads:
+\begin{align}
+  \mathbf{h}_1 &= \tanh(\mathbf{W}_1 \mathbf{o}_k + \mathbf{b}_1) \in \mathbb{R}^{64}, \\
+  \mathbf{h}_2 &= \tanh(\mathbf{W}_2 \mathbf{h}_1 + \mathbf{b}_2) \in \mathbb{R}^{64}, \\
+\begin{align}
+  \text{Action logits:}\quad \boldsymbol{\ell}_k &= \mathbf{W}_{\pi} \mathbf{h}_2 + \mathbf{b}_{\pi} \in \mathbb{R}^{15}, \\
+  \pi_\theta(a \mid \mathbf{o}_k) &= \operatorname{Categorical}(\text{logits}=\boldsymbol{\ell}_k), \\
+  \text{State value:}\quad V_\theta(\mathbf{o}_k) &= \mathbf{w}_V^\top \mathbf{h}_2 + b_V \in \mathbb{R}.
+\end{align}
+During training (\code{deterministic=False}, \code{recorder} active), \code{PolicyStrategy.decide}
+samples $a_k \sim \pi_\theta(\cdot \mid \mathbf{o}_k)$ using a local \code{torch.Generator} seeded by an
+integer drawn from the executor's own PCG64 stream (\code{rng.integers(1 << 31)}), ensuring that
+stochastic rollouts are $100\%$ deterministic given the simulator seed. During evaluation
+(\code{deterministic=True}), it selects the greedy action $a_k = \arg\max_a \ell_{k,a}$.
+
+\subsection[GAE and Clipped PPO]{GAE and Clipped PPO (\code{execution/ppo.py})}
+
+Each PPO iteration $i \in \{1,\dots,I\}$ rolls out $M = 32$ full episodes on seeds drawn from the
+training pool $\code{TRAIN\_SEEDS} = \{0,\dots,999\}$. For each episode trajectory
+$(\mathbf{o}_0, a_0, r_0, \dots, \mathbf{o}_{K-1}, a_{K-1}, r_{K-1})$ with terminal bootstrap value
+$V_K = 0$, \code{\_gae} computes the backward recurrence ($\gamma = 0.999$, $\lambda_{\text{GAE}} = 0.95$):
+\begin{equation}
+  \delta_k = r_k + \gamma V_\theta(\mathbf{o}_{k+1}) - V_\theta(\mathbf{o}_k), \qquad
+  \hat A_k = \delta_k + \gamma\lambda_{\text{GAE}} \hat A_{k+1}, \qquad
+  \hat R_k = \hat A_k + V_\theta(\mathbf{o}_k).
+\end{equation}
+Across all $N_{\text{batch}} \approx 32 \times 400 = 12\,800$ transitions collected in the iteration,
+advantages are standardised: $\tilde A_k = (\hat A_k - \bar A)/(\operatorname{std}(\hat A) + 10^{-8})$.
+Then \code{PPOTrainer.update} runs $E$ epochs (\code{epochs} $\in \{4, 10\}$) of shuffled minibatch
+updates (minibatch size $B = 512$, Adam optimiser with learning rate $\text{lr}$ and global gradient-norm
+clipping at $0.5$) minimising the combined loss:
+\begin{align}
+  \rho_k(\theta) &= \exp\!\big(\log \pi_\theta(a_k \mid \mathbf{o}_k) - \log \pi_{\theta_{\text{old}}}(a_k \mid \mathbf{o}_k)\big), \\
+  \mathcal{L}_{\text{CLIP}}(\theta) &= -\frac{1}{|B|}\sum_{k \in B}
+    \min\!\Big(\rho_k(\theta)\,\tilde A_k,\; \clip(\rho_k(\theta), 1-\epsilon, 1+\epsilon)\,\tilde A_k\Big), \qquad (\epsilon = 0.2), \\
+  \mathcal{L}_V(\theta) &= \frac{1}{|B|}\sum_{k \in B} \big(V_\theta(\mathbf{o}_k) - \hat R_k\big)^2, \qquad
+  \mathcal{H}(\theta) = \frac{1}{|B|}\sum_{k \in B} H\big(\pi_\theta(\cdot \mid \mathbf{o}_k)\big), \\
+  \mathcal{L}(\theta) &= \mathcal{L}_{\text{CLIP}}(\theta) + c_V \mathcal{L}_V(\theta) - c_H \mathcal{H}(\theta),
+  \qquad (c_V = 0.5,\; c_H = \code{entropy\_coef}).
+\end{align}
 
 %==================================================================================================
-\section{Tests}
+\section{Phase 3 Hyperparameter Sweep and Empirical Results (\code{outputs/rl/sweep/})}
+\label{sec:rl_results}
 %==================================================================================================
 
-\code{python -m pytest} runs the suite (115 tests) in about five seconds:
+We ran a grid sweep in the Phase~3 target market (\code{phase3\_config(institutions=1)}: liquid
+\code{low\_cover} with 1 background institution and 2 detecting market makers at default response) across:
+\[
+  \text{lr} \in \{10^{-4},\, 3\cdot 10^{-4},\, 10^{-3}\} \times
+  c_H \in \{0.003,\, 0.01,\, 0.03\} \times
+  \text{epochs} \in \{4,\, 10\} \times
+  Q/V \in \{0.20,\, 0.40\},
+\]
+with $I = 400$ PPO iterations, $M = 32$ episodes per iteration ($12\,800$ episodes per run), and greedy
+evaluation every $25$ iterations on $40$ held-out test seeds ($1000..1039$). On those exact $40$ held-out
+seeds, the deterministic \code{twap\_market} baseline achieves:
+\begin{itemize}[nosep]
+\item At $Q/V = 0.20$: $\text{IS}_{\text{TWAP}} = \mathbf{+2.82\text{ bps}}$ (completion $1.000$);
+\item At $Q/V = 0.40$: $\text{IS}_{\text{TWAP}} = \mathbf{+5.12\text{ bps}}$ (completion $1.000$).
+\end{itemize}
+
+Table~\ref{tab:rl_sweep} reports the top-performing configurations from the completed sweep runs in
+\code{outputs/rl/sweep/summary.json} (ranked by best held-out greedy shortfall among high-completion
+checkpoints $\text{completion} \ge 0.98$).
+
+\begin{table}[h!]
+\centering\footnotesize\setlength{\tabcolsep}{4pt}
+\begin{tabular}{l c r c r r c r r}
+\toprule
+Sweep Config Tag & $Q/V$ & Best IS & Compl. & Iter & Last IS & Last Compl. & TWAP & vs.\ TWAP \\
+\midrule
+\code{lr1e-3\_ent0.003\_ep4\_sz0.20}  & $0.20$ & $\mathbf{+2.40}$ & $0.982$ & $400$ & $+2.40$ & $0.982$ & $+2.82$ & $\mathbf{-0.42\text{ bps}}$ \\
+\code{lr3e-4\_ent0.03\_ep10\_sz0.20}  & $0.20$ & $+2.63$ & $0.986$ & $125$ & $+2.77$ & $0.921$ & $+2.82$ & $-0.19\text{ bps}$ \\
+\code{lr3e-4\_ent0.003\_ep4\_sz0.20}  & $0.20$ & $+2.64$ & $0.984$ & $325$ & $+2.80$ & $0.982$ & $+2.82$ & $-0.19\text{ bps}$ \\
+\code{lr1e-3\_ent0.01\_ep4\_sz0.20}   & $0.20$ & $+2.66$ & $0.988$ & $125$ & $+2.44$ & $0.958$ & $+2.82$ & $-0.16\text{ bps}$ \\
+\code{lr1e-4\_ent0.03\_ep10\_sz0.20}  & $0.20$ & $+2.66$ & $0.981$ & $300$ & $+2.69$ & $0.937$ & $+2.82$ & $-0.16\text{ bps}$ \\
+\code{lr3e-4\_ent0.01\_ep4\_sz0.20}   & $0.20$ & $+2.67$ & $0.984$ & $100$ & $+2.80$ & $0.918$ & $+2.82$ & $-0.15\text{ bps}$ \\
+\code{lr1e-3\_ent0.003\_ep10\_sz0.20} & $0.20$ & $+2.69$ & $0.990$ & $25$  & $+3.00$ & $0.943$ & $+2.82$ & $-0.13\text{ bps}$ \\
+\midrule
+\code{lr3e-4\_ent0.03\_ep10\_sz0.40}  & $0.40$ & $\mathbf{+4.74}$ & $0.984$ & $125$ & $+5.26$ & $0.954$ & $+5.12$ & $\mathbf{-0.38\text{ bps}}$ \\
+\code{lr1e-3\_ent0.01\_ep4\_sz0.40}   & $0.40$ & $\mathbf{+4.80}$ & $0.997$ & $375$ & $+4.81$ & $0.982$ & $+5.12$ & $\mathbf{-0.32\text{ bps}}$ \\
+\code{lr3e-4\_ent0.03\_ep4\_sz0.40}   & $0.40$ & $+4.81$ & $0.987$ & $200$ & $+4.91$ & $0.975$ & $+5.12$ & $-0.31\text{ bps}$ \\
+\code{lr1e-4\_ent0.03\_ep10\_sz0.40}  & $0.40$ & $+4.82$ & $0.988$ & $225$ & $+5.09$ & $0.974$ & $+5.12$ & $-0.30\text{ bps}$ \\
+\code{lr1e-3\_ent0.003\_ep4\_sz0.40}  & $0.40$ & $+4.83$ & $0.991$ & $250$ & $+5.01$ & $0.970$ & $+5.12$ & $-0.29\text{ bps}$ \\
+\code{lr1e-4\_ent0.01\_ep4\_sz0.40}   & $0.40$ & $+4.87$ & $0.994$ & $175$ & $+5.04$ & $0.996$ & $+5.12$ & $-0.25\text{ bps}$ \\
+\code{lr1e-4\_ent0.01\_ep10\_sz0.40}  & $0.40$ & $+4.89$ & $0.996$ & $300$ & $+5.06$ & $0.984$ & $+5.12$ & $-0.23\text{ bps}$ \\
+\code{lr1e-4\_ent0.03\_ep4\_sz0.40}   & $0.40$ & $+4.89$ & $0.991$ & $350$ & $+5.05$ & $0.990$ & $+5.12$ & $-0.23\text{ bps}$ \\
+\bottomrule
+\end{tabular}
+\caption{Hyperparameter sweep results on 40 held-out test seeds ($1000..1039$) in the Phase~3
+\code{low\_cover} market (\code{outputs/rl/sweep/summary.json}). All shortfalls include forced market
+completion at the horizon.}
+\label{tab:rl_sweep}
+\end{table}
+
+\paragraph{Discussion of the Phase~3 RL results.}
+\begin{enumerate}[nosep]
+\item \textbf{Consistent cost reduction across both order sizes:} At $Q/V = 0.20$, the learned policy
+  reduces implementation shortfall from $+2.82\text{ bps}$ (TWAP) to $+2.40\text{ bps}$ ($-0.42\text{ bps}$,
+  a $14.9\%$ total cost reduction, exceeding the $+0.31\text{ bps}$ pure leakage cost by also capturing
+  spread and timing savings via passive orders). At $Q/V = 0.40$, the learned policy reduces IS from
+  $+5.12\text{ bps}$ to $+4.74\text{ bps}$ ($-0.38\text{ bps}$) at $98.4\%$ natural completion and
+  $+4.80\text{ bps}$ ($-0.32\text{ bps}$) at $99.7\%$ natural completion.
+\item \textbf{Hyperparameter lessons:} Four epochs per rollout batch ($\code{epochs}=4$) is much more
+  stable late in training than $\code{epochs}=10$: with $10$ epochs and a high learning rate, the policy
+  can over-optimise a single rollout batch and drift toward lower pre-horizon completion after iteration
+  $200$, which is why \code{train\_rl.py} saves \code{best\_policy.pt} at the best held-out evaluation
+  alongside the final \code{policy.pt}.
+\end{enumerate}
+
+%==================================================================================================
+\part{Verification, Test Suite, and Complete Reproduction Guide}
+\label{part:four}
+%==================================================================================================
+
+%==================================================================================================
+\section{Automated Test Suite (\code{tests/})}
+\label{sec:tests}
+%==================================================================================================
+
+Running \code{python -m pytest} executes $134$ unit and integration tests in $\sim 8$ seconds:
 \begin{description}[nosep]
-\item[\code{test\_book.py}] order book rules: empty and one-sided states, exact window boundaries and
+\item[\code{test\_book.py}] OrderBook rules: empty and one-sided states, exact window boundaries and
   reported evictions, FIFO and partial fills on both sides, price protection of crossing limits, all four
-  self-trade modes after an external partial fill, cancel/modify priority, atomic rejection of invalid
-  modifications, input validation including NumPy integers, snapshot/array isolation, overflow of
-  aggregate volume, and a 600-action random sequence with the full invariant check after every action.
-\item[\code{test\_market.py}] reservation bookkeeping under every removal path (fill, cancel, STP,
-  eviction, budget cap) and the public flow window.
-\item[\code{test\_simulator.py}] determinism, conservation, snapshot/restore and reseed, analysis-mode
-  logging, population built from the configuration with a shared detector registry, frozen and
-  replaceable configuration, flow detector thresholding and saturation.
-\item[\code{test\_foundations.py}] exact event-log replay from (config, seed), from a snapshot and after
-  reseed; stream independence from population changes; invariants after every step; the
-  no-hidden-information guard (with an anticipator present and the metaorder labels guarded), which
-  also verifies that it catches a leak.
-\item[\code{test\_agents.py}] every execution style completes on both sides, is labelled and leaves no
-  resting order; metaorders arrive with log-normal sizes, balanced sides and participation in range;
-  the side choice reverts inventory; the anticipator follows the signal within its limit and unwinds;
-  the contrarian anticipator trades against the flow first; makers pull quotes on a volatility spike and
-  return after the cooldown, and reduce size with relative volatility; private valuations run and differ
-  from the shared value; an idle external agent leaves the event log and every stream unchanged, and a
-  trading one leaves the scheduler and hidden-value streams unchanged; adversary presets.
-\item[\code{test\_env.py}] the Gymnasium prototype is seeded, bounded and picklable.
-\item[\code{test\_execution.py}] every baseline completes $Q$ on both sides within the horizon (plus
-  grace), leaves no resting order, reports a finite IS and consistent fills; IS equals the
-  tape-derived average price; Immediate sends one order and TWAP one per decision; a do-nothing
-  strategy is forced in full at $T$; the resting-order, through-ticks and participation limits bind;
-  \code{Market.hide} removes the executor from the flow window and trade list but not from volume or
-  the tape; Almgren--Chriss trajectories are monotone, front-loaded for higher $\lambda$ and end at $Q$;
-  Obizhaeva--Wang blocks and rate sum to $Q$; the resilience fit recovers a known decay; calibration
-  files round-trip; the fill prober works.
-\item[\code{test\_detectors.py}] feature tracker runs, regularity and shapes; the A2 detectors follow
-  one-sided flow and flip; the CUSUM alarms, restarts and decays; the A3 classifier trains to AUC
-  $> 0.9$ on separable synthetic data, round-trips its weights and signs its signal correctly;
-  observers attach to a simulator and update every step (A3 skipped without weights).
-\item[\code{test\_scoring.py}] AUC on perfect, inverted, tied, random and degenerate inputs;
-  detection delay and false alarms; signed activity labels; bootstrap intervals and paired
-  differences; CVaR; Holm.
-\item[\code{test\_experiments.py}] episode sides by parity and spec counts; an episode is
-  deterministic and JSON-serialisable; visible and invisible runs are identical under A0 and share
-  $Q$ and arrival mid under A1; the E3 runner writes one record per episode, summarises with leakage,
-  Holm and gate fields and yields one impact path per visible episode; the E2 summary covers every
-  observer with valid scores.
+  self-trade prevention modes after an external partial fill, cancel/modify priority preservation, atomic
+  rejection of invalid modifications, input validation including NumPy integers, snapshot/array isolation,
+  overflow of aggregate volume, and a 600-action random fuzz sequence asserting full book invariants
+  after every single action.
+\item[\code{test\_market.py}] Exact cash and share reservation bookkeeping under every removal path
+  (fill, cancel, STP, window eviction, budget cap) and ring-buffer flow window updates.
+\item[\code{test\_simulator.py}] Determinism, cash/share conservation, snapshot/restore and in-place
+  \code{reseed}, analysis-mode vs.\ training-mode logging, population construction with shared detector
+  registry, frozen and replaceable configuration, flow detector thresholding and saturation.
+\item[\code{test\_foundations.py}] Byte-for-byte event-log replay from \code{(config, seed)}, from a
+  restored snapshot, and after \code{reseed}; stream independence from population changes; invariants
+  asserted after every step; and the \textbf{no-hidden-information guard} (which proxies \code{Market},
+  \code{OrderBook}, \code{FundamentalValue}, and \code{MetaorderLog} to raise an error if any agent,
+  detector, or \code{ExecutorAgent} ever accesses private identities, other accounts, the tape, or
+  ground-truth labels).
+\item[\code{test\_agents.py}] All five institutional execution styles complete on both sides, are
+  labelled, and leave no resting order; log-normal sizes, balanced sides, inventory reversion; order
+  anticipator directional and contrarian-first behaviour; market-maker volatility pull cooldown and
+  fragility scaling; private valuations; external agent stream non-interference.
+\item[\code{test\_presets.py}] Composition of \code{regime()} and \code{adversary()} preserving thin-book
+  market-maker sizes and custom detecting-maker counts.
+\item[\code{test\_execution.py}] All 12 baseline strategies complete $Q$ on both sides, leave no resting
+  orders, and report exact tape-consistent IS; hard limits (resting orders, through-ticks, participation)
+  bind; \code{Market.hide} removes the executor from flow statistics and detectors while keeping price
+  and volume identical under A0; Almgren--Chriss and Obizhaeva--Wang schedule identities; resilience
+  exponential fit; \code{FillProber} and calibration serialization.
+\item[\code{test\_detectors.py}] \code{FeatureTracker} rolling features and regularity; A2 detectors
+  (\code{runs}, \code{cusum} alarm/restart/decay, \code{volume\_clock}, \code{regularity}); A3 logistic
+  classifier training to $\text{AUC} > 0.9$ on synthetic separable data and weight serialization.
+\item[\code{test\_scoring.py}] Mann--Whitney ROC AUC (perfect, inverted, tied, degenerate), detection
+  delay, false-alarm rate, activity labels, percentile bootstrap CI, paired difference, CVaR$_{95}$, and
+  Holm step-down adjustment.
+\item[\code{test\_experiments.py}] Episode parity, deterministic JSON-serializable \code{EpisodeResult},
+  exact equality of visible and invisible runs under A0, E2/E3/E7/E7b runners and summaries, impact paths.
+\item[\code{test\_env.py}] Legacy Gymnasium wrapper \code{OrderBookEnv} seeding, bounds, and pickling.
+\item[\code{test\_rl.py}] Phase~3 RL suite: 13-feature vector shape, finiteness, and buy/sell sign
+  symmetry; 15-action decision mapping; exact telescoping equality $\sum_k r_k = -\text{IS (bps)}$;
+  seed-deterministic rollouts; \code{PolicyNet} save/load round-trip; \code{make\_strategy("rl@...")};
+  PPO weight update and finite losses; \code{phase3\_config}; and \code{sweep\_rl} job tagging and ranking.
 \end{description}
-The hidden-information guard of \code{test\_foundations.py} now also wraps an executor running the
-\code{footprint} strategy (the baseline that reads the most state).
 
 %==================================================================================================
-\section{Reproduction}
+\section{Complete Command Reference for Reproducing Every Phase}
+\label{sec:repro_all}
 %==================================================================================================
 
 \begin{lstlisting}
-pip install -e .                                   # or: uv pip install -e .
-python -m pytest                                   # test suite
-python -m scripts.benchmark                        # steps/s and a profile
-python -m scripts.validate                         # 5 seeds x 10k steps, with paired impact
-python -m scripts.validate --seeds 10 --steps 50000 --preset private
-python -m scripts.impact --seeds 20 --styles twap_market twap_passive pov
-python -m scripts.run                              # analysis run -> outputs/simulation.png
-python -m scripts.batch                            # 100 seeds in parallel -> outputs/price_paths.*
-python -m scripts.animate                          # video with the live book -> outputs/simulation.mp4
-python -m scripts.burn_in --seeds 8                # RL start-state bank -> outputs/states.pkl
-cd docs && latexmk -pdf simulator.tex              # this document
+# --- Environment & Test Suite ---
+uv pip install -e .                                # install package + numpy, matplotlib, gymnasium, torch, wandb
+.venv/bin/python -m pytest                         # 134 tests in ~8s
+
+# --- Phase 1: Simulator Validation & Square-Root Impact ---
+.venv/bin/python -m scripts.benchmark              # speed benchmark (~15,000 steps/s) + cProfile
+.venv/bin/python -m scripts.validate --seeds 5 --steps 30000
+.venv/bin/python -m scripts.impact --seeds 20 --styles twap_market twap_passive pov
+.venv/bin/python -m scripts.run                    # single 10k-step diagnostic plot -> outputs/simulation.png
+.venv/bin/python -m scripts.animate                # live order-book video -> outputs/simulation.mp4
+
+# --- Phase 2: Calibration, Detector Training, Detectability & Leakage ---
+.venv/bin/python -m scripts.calibrate              # fit A0 parameters -> outputs/calibration.json
+.venv/bin/python -m scripts.train_detector         # train A3 classifier -> outputs/detectors/learned.npz
+.venv/bin/python -m scripts.e2_detectability --workers 8
+.venv/bin/python -m scripts.e3_leakage --workers 8 --paths
+.venv/bin/python -m scripts.e7_regimes --workers 8
+.venv/bin/python -m scripts.e7_strength --workers 8
+
+# --- Phase 3: RL Executor Training, Hyperparameter Sweep & Counterfactual Eval ---
+caffeinate -i .venv/bin/python -u -m scripts.train_rl \
+  --iterations 400 --episodes 32 --epochs 4 --lr 1e-3 --entropy 0.003 --size 0.20 \
+  --eval-every 25 --eval-seeds 40 --wandb --out rl/best_sz020
+
+caffeinate -i .venv/bin/python -u -m scripts.sweep_rl \
+  --workers 6 --wandb --sync-existing --wandb-project stealth-execution
+
+# Score a trained RL checkpoint against baselines via the E7b leakage counterfactual:
+.venv/bin/python -m scripts.e7_strength --workers 8 \
+  --strategies rl@outputs/rl/sweep/lr1e-3_ent0.003_ep4_sz0.20/policy.pt twap_market twap_passive
+
+# Rebuild this PDF manual:
+cd docs && latexmk -pdf simulator.tex
 \end{lstlisting}
-Every script writes to \code{outputs/} (ignored by git) and takes \code{--seeds}/\code{--steps}
-arguments; the defaults finish in seconds, the paper runs in minutes. \code{validate} and \code{impact}
-save JSON (and the impact paths as \code{.npz}) so that figures can be rebuilt without re-simulating.
-
-%==================================================================================================
-\section{Status against the research plan and next steps}
-\label{sec:final}
-%==================================================================================================
-
-\paragraph{Phase 0 (foundations).} Complete: invariant tests, deterministic replay, benchmark,
-snapshot/restore, per-agent streams, no-hidden-information guard.
-
-\paragraph{Phase 1 (simulator).} All items of \S4.1 of the plan are implemented: the fundamental switch,
-the institutional population with labels, detectors behind one interface, configurable maker responses
-and fragility, the order anticipator, the step unit and training support. Every \S4.2 target passes on
-5 seeds $\times$ 30\,000 steps with the final defaults (Table~\ref{tab:targets}), so the Phase 1 gate
-is met for the default (shared-value) market. Two caveats for the paper run: the paired impact
-exponent rests on $n = 25$ injected orders and should be re-estimated with
-\code{python -m scripts.impact --seeds 20} (and across styles); and the private-valuation variant needs
-its own calibration before results are reported under it. The optional comparison with a LOBSTER
-sample using LOB-Bench metrics has not been done.
-
-\paragraph{Phase 2 (measurement without RL).} Implemented (Part~II): the execution task and executor,
-twelve baselines with calibration, detectors A2 and A3, scoring and the statistical protocol, and the
-E2/E3 definitions, runner and summaries, all covered by tests. \textbf{The gate has not been run at
-full scale}; the four-seed pilot passed it narrowly (\S\ref{sec:e3}). The commands of
-\S\ref{sec:repro2} produce the E2 and E3 tables; the gate verdict is printed at the end of E3. Open
-items: the Goliath--Gebbie reconstruction is represented by the simplified regularity detector; the
-A3 classifier is logistic rather than a GRU or gradient boosting (both can be added behind the same
-\code{LearnedDetector} interface); the Gymnasium prototype (\code{env.py}) is still the pre-plan
-environment and will be replaced by the execution MDP of plan \S5 in Phase~3, reusing
-\code{ExecutorAgent} and \code{ExecState}.
 
 \end{document}

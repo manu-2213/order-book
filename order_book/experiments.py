@@ -99,6 +99,8 @@ class EpisodeSpec:
     observers: tuple[str, ...] = ()
     record_path: bool = False
     base_config: SimConfig | None = None
+    regime: str = "default"         # label for grouping E7 regimes; the market itself is in base_config
+    prebuilt_config: bool = False   # if set, base_config is the final SimConfig (detection already wired)
 
     @property
     def resolved_side(self) -> str:
@@ -140,7 +142,7 @@ class EpisodeResult:
 def run_episode(spec: EpisodeSpec, calibration: Calibration | None = None,
                 learned_weights: str | None = None) -> EpisodeResult:
     t0 = time.perf_counter()
-    cfg = ADVERSARIES[spec.adversary].config(spec.base_config)
+    cfg = spec.base_config if spec.prebuilt_config else ADVERSARIES[spec.adversary].config(spec.base_config)
     sim = Simulator(spec.seed, cfg, analysis=True)
     observers = make_observers(spec.observers, learned_weights)
     for name, det in observers.items():
@@ -174,15 +176,16 @@ def run_episode(spec: EpisodeSpec, calibration: Calibration | None = None,
     sim.check_conservation()
     inst = [(r.start - spec.burn_in, (r.end if r.end is not None else sim.market.step) - spec.burn_in, r.side)
             for r in sim.metaorders.records if (r.end is None or r.end > spec.burn_in)]
+    spec_dict = {k: v for k, v in asdict(spec).items() if k != "base_config"}  # drop the heavy SimConfig
     if executor is None:
-        return EpisodeResult(asdict(spec), spec.resolved_side, 0, 0, 0, 0, 1.0, None, float(mids[0]), float(mids[-1]),
+        return EpisodeResult(spec_dict, spec.resolved_side, 0, 0, 0, 0, 1.0, None, float(mids[0]), float(mids[-1]),
                              0.0, 0, None, volume, (0, spec.horizon), inst,
                              {k: v.tolist() for k, v in signals.items()},
                              mids.tolist() if spec.record_path else None, time.perf_counter() - t0)
     r = executor.result
     end_rel = (r.end - spec.burn_in) if r.end is not None else spec.horizon
     return EpisodeResult(
-        asdict(spec), r.side, r.quantity, r.executed, r.forced, r.incomplete, r.completion, r.shortfall_bps,
+        spec_dict, r.side, r.quantity, r.executed, r.forced, r.incomplete, r.completion, r.shortfall_bps,
         r.arrival_mid, float(mids[-1]), r.aggressive_executed / r.executed if r.executed else 0.0, r.orders_sent,
         end_rel, volume, (0, min(end_rel, window)), inst, {k: v.tolist() for k, v in signals.items()},
         mids.tolist() if spec.record_path else None, time.perf_counter() - t0,
@@ -261,6 +264,18 @@ class E2Config:
                 for strategy in self.strategies for size in self.sizes for seed in self.seeds]
 
 
+def _nan_aggregate(func, values, *args) -> float:
+    """Apply ``func`` over the non-nan values; return nan (no warning) when there are none.
+
+    Scores are legitimately undefined per episode (e.g. a detector's AUC on institutional metaorders
+    when none are active outside the executor's window), so an all-nan group means "no data", not an
+    error, and must not raise ``RuntimeWarning: Mean of empty slice``.
+    """
+    arr = np.asarray(values, float)
+    arr = arr[~np.isnan(arr)]
+    return float(func(arr, *args)) if arr.size else float("nan")
+
+
 def summarise_e2(results: list[EpisodeResult], threshold: float = 0.5) -> dict:
     out: dict = {}
     detectors = sorted({k for r in results for k in r.signals})
@@ -286,10 +301,11 @@ def summarise_e2(results: list[EpisodeResult], threshold: float = 0.5) -> dict:
                 auc_inst.append(roc_auc(np.abs(sig[~exec_mask]), inst[~exec_mask] != 0))
             row[det] = {
                 "auc_abs": bootstrap_ci(aucs), "auc_signed": bootstrap_ci(signed),
-                "delay_median": float(np.nanmedian(delays)), "delay_p90": float(np.nanpercentile(delays, 90)),
-                "false_alarm_institutional": float(np.nanmean(fa_inst)),
-                "false_alarm_quiet": float(np.nanmean(fa_quiet)),
-                "auc_institutional": float(np.nanmean(auc_inst)), "episodes": len(rs),
+                "delay_median": _nan_aggregate(np.median, delays),
+                "delay_p90": _nan_aggregate(np.percentile, delays, 90),
+                "false_alarm_institutional": _nan_aggregate(np.mean, fa_inst),
+                "false_alarm_quiet": _nan_aggregate(np.mean, fa_quiet),
+                "auc_institutional": _nan_aggregate(np.mean, auc_inst), "episodes": len(rs),
             }
         out[f"{strategy}|{size}"] = row
     return out
@@ -417,3 +433,198 @@ def impact_paths(results: list[EpisodeResult]) -> dict:
             out[f"{s['strategy']}|{s['size_fraction']}|{s['adversary']}|{s['seed']}"] = \
                 (sign * (np.asarray(r.mid_path) - none[(s["adversary"], s["seed"])])).tolist()
     return out
+
+
+# ----- E7: where does leakage live? (plan section 9, hypothesis H4) ------------------------ #
+
+@dataclass(frozen=True)
+class RegimeSpec:
+    """One market regime: how thin it is and how much legitimate large-order flow hides the executor."""
+
+    name: str
+    liquidity: float = 1.0          # scales noise rate, speculator count and maker quote size
+    institutions: int = 4           # institutional traders providing cover (0 = none)
+    makers: int = 4
+    mm_size_scale: float = 1.0      # thins the book independently of ``liquidity``
+
+    def base(self) -> SimConfig:
+        from order_book.presets import regime
+        return regime(self.liquidity, self.institutions, self.makers, self.mm_size_scale)
+
+
+DEFAULT_REGIMES = (
+    RegimeSpec("deep_cover", 1.0, 4),            # the E1-E3 market: full cover, deep book
+    RegimeSpec("half_liquidity", 0.5, 4),        # thinner market, full cover
+    RegimeSpec("low_cover", 1.0, 1),             # deep book, little cover
+    RegimeSpec("thin_low_cover", 0.5, 1),        # thin and little cover
+    RegimeSpec("no_cover", 1.0, 0),              # deep book, no institutions
+    RegimeSpec("thin_no_cover", 0.4, 0, mm_size_scale=0.5),  # thin book, no cover: the executor dominates
+)
+
+
+@dataclass(frozen=True)
+class E7Config:
+    """How much does cover help, and when does leakage appear? (H4)
+
+    Runs the leakage counterfactual (visible vs invisible, plus no-executor) across a grid of market
+    regimes and executor sizes, under A1-medium and A4. As liquidity and institutional cover fall and
+    the order's share of flow rises, detection should bite and leakage should grow. Reports, per
+    regime x strategy x size x adversary: the paired leakage with interval and p-value; the mean
+    market volume per step and executor Q (so the order's share of liquidity is explicit); and how
+    much the executor itself moves the flow detector (mean |signal| over its window, visible minus
+    invisible), which is the detection channel the leakage flows through.
+    """
+
+    name: str = "E7"
+    regimes: tuple[RegimeSpec, ...] = DEFAULT_REGIMES
+    strategies: tuple[str, ...] = ("twap_market", "twap_passive")
+    sizes: tuple[float, ...] = (0.2, 0.4)
+    adversaries: tuple[str, ...] = ("A1-medium", "A4")
+    visibilities: tuple[str, ...] = ("visible", "invisible")
+    seeds: tuple[int, ...] = tuple(TEST_SEEDS)
+    horizon: int = 2_000
+    decision_interval: int = 5
+    burn_in: int = 2_000
+    after: int = 500
+
+    def specs(self) -> list[EpisodeSpec]:
+        specs = []
+        for rs in self.regimes:
+            base = rs.base()
+            common = dict(horizon=self.horizon, decision_interval=self.decision_interval,
+                          burn_in=self.burn_in, after=self.after, base_config=base, regime=rs.name)
+            for adv in self.adversaries:
+                for seed in self.seeds:
+                    specs.append(EpisodeSpec(seed, "none", 0.0, adv, "none", **common))
+            for strategy in self.strategies:
+                for size in self.sizes:
+                    for adv in self.adversaries:
+                        for vis in self.visibilities:
+                            for seed in self.seeds:
+                                specs.append(EpisodeSpec(seed, strategy, size, adv, vis, **common))
+        return specs
+
+
+def _flow_firing(r: EpisodeResult) -> float:
+    """Mean |flow detector signal| over the executor's active window (the detection the makers react to)."""
+    sig = np.abs(np.asarray(r.signals.get("flow", [])))
+    lo, hi = r.executor_window
+    window = sig[lo:hi]
+    return float(window.mean()) if window.size else float("nan")
+
+
+def summarise_e7(results: list[EpisodeResult]) -> dict:
+    by_key: dict = {}
+    for r in results:
+        s = r.spec
+        if s["visibility"] == "none":
+            continue
+        by_key.setdefault((s["regime"], s["strategy"], s["size_fraction"], s["adversary"]), {}).setdefault(
+            s["visibility"], {})[s["seed"]] = r
+    rows: dict = {}
+    for (reg, strategy, size, adv), vis in sorted(by_key.items()):
+        visible, invisible = vis.get("visible", {}), vis.get("invisible", {})
+        seeds = sorted(set(visible) & set(invisible))
+        if not seeds:
+            continue
+        is_vis = [visible[s].shortfall_bps for s in seeds]
+        is_inv = [invisible[s].shortfall_bps for s in seeds]
+        firing_vis = [_flow_firing(visible[s]) for s in seeds]
+        firing_inv = [_flow_firing(invisible[s]) for s in seeds]
+        rows[f"{reg}|{strategy}|{size}|{adv}"] = {
+            "episodes": len(seeds),
+            "volume_per_step": float(np.mean([visible[s].expected_volume for s in seeds])),
+            "quantity": float(np.mean([visible[s].quantity for s in seeds])),
+            "is_visible": bootstrap_ci(is_vis), "is_invisible": bootstrap_ci(is_inv),
+            "leakage": paired_difference(is_vis, is_inv),
+            "cvar95_visible": cvar(is_vis), "completion": float(np.mean([visible[s].completion for s in seeds])),
+            "flow_firing_visible": float(np.nanmean(firing_vis)),
+            "flow_firing_channel": float(np.nanmean(np.array(firing_vis) - np.array(firing_inv))),
+        }
+    return {"rows": rows, "regimes": {rs.name: asdict(rs) for rs in DEFAULT_REGIMES}}
+
+
+def format_e7(summary: dict) -> str:
+    lines = [f"{'regime':<16}{'strategy':<14}{'Q/V':>5}{'adv':>11}{'V/step':>7}{'Q':>7}{'ISvis':>7}"
+             f"{'leak':>7}{'[95% CI]':>16}{'p':>6}{'fire':>6}{'chan':>6}{'compl':>6}"]
+    for key, r in summary["rows"].items():
+        reg, strat, size, adv = key.split("|")
+        leak = r["leakage"]
+        lines.append(f"{reg:<16}{strat:<14}{float(size):>5.2f}{adv:>11}{r['volume_per_step']:>7.1f}"
+                     f"{r['quantity']:>7.0f}{r['is_visible'][0]:>7.2f}{leak['mean']:>7.2f}"
+                     f"  [{leak['low']:+.2f},{leak['high']:+.2f}]{leak['p_greater']:>6.2f}"
+                     f"{r['flow_firing_visible']:>6.2f}{r['flow_firing_channel']:>6.2f}{r['completion']:>6.2f}")
+    return "\n".join(lines)
+
+
+# ----- E7b: detector-strength sweep in a fixed (liquid, low-cover) regime ------------------ #
+
+@dataclass(frozen=True)
+class StrengthSpec:
+    """One detection-strength setting: the flow threshold, how many makers react, and how hard."""
+
+    name: str
+    threshold: str = "medium"       # flow-detector threshold the makers react to
+    detecting: int = 2              # number of makers that react
+    detect_skew: float = 4.0        # reservation shift per unit signal (ticks)
+    detect_widen: float = 3.0       # extra half-spread on the pressured side per unit signal
+    detect_size_cut: float = 0.7    # size cut on the pressured side per unit signal
+
+
+DETECTION_STRENGTHS = (
+    StrengthSpec("weak", "strict", 2, 4.0, 3.0, 0.7),       # fires rarely, moderate response
+    StrengthSpec("default", "medium", 2, 4.0, 3.0, 0.7),    # the A1-medium response (E2/E3)
+    StrengthSpec("strong", "lenient", 4, 8.0, 6.0, 0.9),    # all makers react, sooner and harder
+    StrengthSpec("max", "lenient", 4, 12.0, 10.0, 1.0),     # pulls the pressured side entirely
+)
+
+
+def _with_response(cfg: SimConfig, skew: float, widen: float, size_cut: float) -> SimConfig:
+    """Set the detection response on every market maker (before ``adversary`` wires who detects)."""
+    makers = tuple(replace(m, detect_skew=skew, detect_widen=widen, detect_size_cut=size_cut)
+                   for m in cfg.population.market_makers)
+    return replace(cfg, population=replace(cfg.population, market_makers=makers))
+
+
+def strength_config(regime_spec: RegimeSpec, strength: StrengthSpec, level: str = "A1") -> SimConfig:
+    """Final config: the regime's market with the strength's maker response and detection wiring."""
+    from order_book.presets import adversary
+    base = _with_response(regime_spec.base(), strength.detect_skew, strength.detect_widen, strength.detect_size_cut)
+    return adversary(level, strength.threshold, base=base, detecting=strength.detecting)
+
+
+@dataclass(frozen=True)
+class E7StrengthConfig:
+    """Vary detector strength in a fixed liquid, low-cover regime to find where TWAP leakage becomes
+    significant (~1-2 bps) without the market breaking down (the thin regimes just add variance).
+
+    The regime stays liquid so impact variance is low and completion stays at 1; only the detector's
+    threshold, the share of detecting makers and the response magnitude change. The setting with the
+    largest significant leakage at full completion is the candidate Phase 3 RL environment.
+    """
+
+    name: str = "E7b"
+    regime: RegimeSpec = RegimeSpec("low_cover", 1.0, 1)
+    strengths: tuple[StrengthSpec, ...] = DETECTION_STRENGTHS
+    strategies: tuple[str, ...] = ("twap_market", "twap_passive")
+    sizes: tuple[float, ...] = (0.2, 0.4)
+    level: str = "A1"               # A1 (detecting makers only) or A4 (plus an anticipator)
+    seeds: tuple[int, ...] = tuple(TEST_SEEDS)
+    horizon: int = 2_000
+    decision_interval: int = 5
+    burn_in: int = 2_000
+    after: int = 500
+
+    def specs(self) -> list[EpisodeSpec]:
+        specs = []
+        for strength in self.strengths:
+            cfg = strength_config(self.regime, strength, self.level)
+            label = f"{self.regime.name}/{strength.name}"
+            common = dict(horizon=self.horizon, decision_interval=self.decision_interval, burn_in=self.burn_in,
+                          after=self.after, base_config=cfg, regime=label, prebuilt_config=True)
+            for strategy in self.strategies:
+                for size in self.sizes:
+                    for vis in ("visible", "invisible"):
+                        for seed in self.seeds:
+                            specs.append(EpisodeSpec(seed, strategy, size, self.level, vis, **common))
+        return specs

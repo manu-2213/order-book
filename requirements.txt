@@ -1,6 +1,8 @@
 numpy
 matplotlib
 gymnasium
+torch
+wandb
 ipykernel
 imageio-ffmpeg
 pytest

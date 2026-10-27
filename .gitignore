@@ -7,3 +7,4 @@ outputs/
 *.npz
 *.pkl
 .DS_Store
+wandb
