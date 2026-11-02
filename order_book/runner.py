@@ -12,6 +12,7 @@ statistic crosses a seed until the merge, which refuses to summarise an incomple
 """
 
 import json
+import os
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -79,5 +80,7 @@ class IncompleteShards(RuntimeError):
 
     def __init__(self, missing: list[int], out: Path):
         self.missing = missing
+        out = Path(out)
+        job = os.environ.get("SLURM_JOB_NAME", out.name).removesuffix("_merge")
         super().__init__(f"{out}: {len(missing)} shards unfinished. Resubmit them; finished runs are kept:\n"
-                         f"    ARRAY={','.join(map(str, missing))} bash hpc/submit.sh <paper> <job>")
+                         f"    ARRAY={','.join(map(str, missing))} bash hpc/submit.sh {out.parent.name} {job}")

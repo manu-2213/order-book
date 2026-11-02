@@ -16,4 +16,4 @@ logs/
 *.out
 *.toc
 *.synctex.gz
-papers
+papers/*/paper/

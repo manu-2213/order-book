@@ -1,10 +1,12 @@
 # Running on the cluster
 
+The commands to copy are in `hpc_commands.txt`, a local file git does not track.
+
 The same workflow as DeepHedging: sync with `rsync` from the Mac, one short Slurm file per run, a smoke test first, and `submit_all.sh` for the grid.
 Each command says where it runs. **None of this has been run on the cluster yet**, so the first run below is also the test of these scripts.
 
 The differences from DeepHedging: order_book is CPU-only and parallelises over processes, so jobs use the default `compute` partition with many cores, no GPU and no account. There
-are no banks to build. Job files follow [the cluster's guide](https://docs.hpc.qmul.ac.uk/using/submittingjobs/): cores with `-n` and read back as `$SLURM_NTASKS`, not `-c`; memory with
+are no banks to build. Every job asks for 1 hour, so it qualifies for the short queue. Job files follow [the cluster's guide](https://docs.hpc.qmul.ac.uk/using/submittingjobs/): cores with `-n` and read back as `$SLURM_NTASKS`, not `-c`; memory with
 `--mem-per-cpu`; output named with `%x.o%j`. The one addition is `-N 1`, because workers are processes on one machine and the guide's example does not guarantee that.
 
 | Item | Value |
@@ -56,35 +58,43 @@ Then read `papers/decomposition/slurm/logs/smoke_test.o<id>`:
 
 ```bash
 bash papers/decomposition/slurm/submit_all.sh          # e8_deep_cover, e8_low_cover, protocol, detection_curve
-bash papers/decomposition/slurm/submit_all.sh extras   # e8_horizons, replications
+bash papers/decomposition/slurm/submit_all.sh extras   # e8_horizons, detection_curve_deep, replications
 bash papers/decomposition/slurm/submit_all.sh all      # all of them
 ```
 
-Each job uses `--workers $SLURM_NTASKS`, 32 by default; to change it, edit `-n` in the job file. Queue time depends mostly on cores and memory, not on runtime. The CPU hours come from the pilot's speed on the Mac: about 0.8 s per run in deep cover, 1.4 s in low cover with the learned
-executors, and in proportion to the horizon.
+**Every job is split into 1-hour tasks**, because those start at once in the short queue. Each grid is a Slurm array with one seed per task, writing to `outputs/<paper>/<job>/shards/<task>/`, and
+`submit.sh` queues a `<job>_merge` job after it. The merge checks every run is there, writes `episodes.jsonl` and `summary.json`, and emails you when it ends.
 
-| Job | Runs | CPU hours | Walltime asked |
-|---|---|---|---|
-| `e8_deep_cover` | 21,600 | 5-7 | 24 h |
-| `e8_low_cover` | 28,000 | 11 | 24 h |
-| `e8_horizons` | 18,000 | 7-10, mostly the 8,000-step horizon | 48 h |
-| `protocol` | 2,400 | 1 | 12 h |
-| `detection_curve` | 4,200 | 1 | 12 h |
-| `replications` | 1,840 | 1 | 12 h |
+If a task is killed at the hour, the merge fails and its log gives the command to resubmit what is missing. A task keeps its finished runs, so a retry only does the rest:
 
-These are estimates; correct them with the smoke test's speed. Very large orders in some seeds run slower than average.
+```bash
+ARRAY=3,7 bash hpc/submit.sh decomposition e8_deep_cover
+```
+
+Estimates come from the pilot's timings on the Mac, where the slowest seed was 1.4 times the median and no single run took more than 3 seconds. They leave room for a slower cluster, but correct them with the smoke test's speed.
+
+| Job | Tasks | Runs | CPU minutes per task | Cores | Time per task |
+|---|---|---|---|---|---|
+| `e8_deep_cover` | 20 | 21,600 | 15-20 | 4 | 5 min |
+| `e8_low_cover` | 20 | 28,000 | 20-30 | 4 | 7 min |
+| `e8_horizons` | 20 | 18,000 | about 25 | 8 | 3 min |
+| `protocol` | 40 | 2,400 | 1 | 4 | under 1 min |
+| `detection_curve`, `detection_curve_deep` | 20 each | 2,100 each | 2 | 4 | under 1 min |
+| `replications` | 20 | 1,840 | 2 | 4 | under 1 min |
+
+`e2`, `e3`, `e7`, `e7b` and `rl_heldout` in `papers/stealth_execution/slurm/` are not split: each is a single 1-hour job on 16 cores. They are not resumable, so if one hits the hour, raise its `-t` or cores.
 
 **Decide before the final grid:** the default burn-in of 2,000 keeps results comparable with E3, but volume is still rising then. A longer burn-in means adding `--burn-in 5000` to
-the job files, and the results are then not comparable with the pilot.
+both the array and merge job files, and the results are then not comparable with the pilot.
 
 ## Monitoring and results
 
 ```bash
 squeue --me                                                          # cluster
-tail -f papers/decomposition/slurm/logs/e8_deep_cover.o<id>          # cluster: progress and an ETA per run
+tail -f papers/decomposition/slurm/logs/e8_deep_cover.o<id>.<task>   # cluster: progress of one task
 jobstats                                                             # cluster: memory requested against used; lower --mem-per-cpu if far apart
 scancel <id>                                                         # cluster
-bash hpc/submit.sh decomposition e8_deep_cover                       # cluster: resume after a walltime kill or crash
+ARRAY=3,7 bash hpc/submit.sh decomposition e8_deep_cover             # cluster: resubmit tasks a merge reported missing
 bash hpc/pull.sh decomposition                                       # Mac: summaries and manifests
 bash hpc/pull.sh decomposition --all                                 # Mac: also the per-episode logs
 ```
@@ -110,5 +120,6 @@ Inherited from DeepHedging, plus this repo's own.
   A change that keeps the fingerprints but alters behaviour they do not reach would slip through, so wait, or use a new output folder.
 - **Results are never pushed.** `hpc/rsync.filter` sends only the listed inputs from `outputs/`, so a push cannot overwrite a result.
 - **No `.git` on the cluster.** `push.sh` writes the commit to `.source_version`, and manifests cite it. Commit before pushing, or manifests will say `dirty: true`.
-- **A resumed run's walltime is per job.** Re-submit as often as needed: results are flushed line by line.
-- **`e2`, `e3`, `e7` and `e7b` do not resume.** Only the decomposition's scripts do.
+- **Tasks can be resubmitted as often as needed:** results are flushed line by line.
+- **Email only comes from the merge.** The cluster does not send it for array jobs, so a killed task only shows up when the merge fails.
+- **`e2`, `e3`, `e7` and `e7b` do not resume or split.** Only the decomposition's scripts do.

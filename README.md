@@ -181,7 +181,7 @@ Commands (from the repo root; outputs go to `outputs/`):
 
 ```sh
 pip install -e .                          # or: uv pip install -e .
-python -m pytest                          # 292 tests, ~45 s
+python -m pytest                          # 322 tests, ~45 s
 python -m scripts.validate                # stylised facts + paired impact, 5 seeds x 10k steps
 python -m scripts.validate --seeds 10 --steps 50000 --preset private
 python -m scripts.impact --seeds 20       # paired square-root impact, saves paths

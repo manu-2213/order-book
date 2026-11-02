@@ -1643,7 +1643,7 @@ loses the pairing for good, which an aggregate variance ratio cannot.
 \label{sec:tests}
 %==================================================================================================
 
-Running \code{python -m pytest} executes $292$ unit and integration tests in about 45 seconds, across \code{tests/} and \code{papers/*/tests/}:
+Running \code{python -m pytest} executes $322$ unit and integration tests in about 45 seconds, across \code{tests/} and \code{papers/*/tests/}:
 \begin{description}[nosep]
 \item[\code{test\_book.py}] OrderBook rules: empty and one-sided states, exact window boundaries and
   reported evictions, FIFO and partial fills on both sides, price protection of crossing limits, all four
@@ -1704,7 +1704,7 @@ Running \code{python -m pytest} executes $292$ unit and integration tests in abo
 \begin{lstlisting}
 # --- Environment & Test Suite ---
 uv pip install -e .                                # install package + numpy, matplotlib, gymnasium, torch, wandb
-.venv/bin/python -m pytest                         # 292 tests in ~45s
+.venv/bin/python -m pytest                         # 322 tests in ~45s
 
 # --- Phase 1: Simulator Validation & Square-Root Impact ---
 .venv/bin/python -m scripts.benchmark              # speed benchmark (~15,000 steps/s) + cProfile
