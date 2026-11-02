@@ -374,7 +374,8 @@ def test_a_grid_killed_part_way_resumes_without_repeating_runs(tmp_path):
     assert summarise_decomposition(resumed)["rows"] == summarise_decomposition(whole)["rows"]
 
 
-def test_shards_merge_into_exactly_what_one_job_would_have_produced(tmp_path):
+def test_shards_merge_into_exactly_what_one_job_would_have_produced(tmp_path, monkeypatch):
+    monkeypatch.delenv("SLURM_JOB_NAME", raising=False)          # the retry message names the Slurm job when there is one
     from order_book.runner import IncompleteShards
     from papers.decomposition.decomposition import merge_grid, run_grid, run_shard
 
@@ -397,3 +398,13 @@ def test_shards_merge_into_exactly_what_one_job_would_have_produced(tmp_path):
     assert [r.shortfall_bps for r in merged] == [r.shortfall_bps for r in whole]
     assert summarise_decomposition(merged)["rows"] == summarise_decomposition(whole)["rows"]
     assert sum(1 for _ in open(out / "episodes.jsonl")) == len(specs)
+
+
+def test_the_retry_message_names_the_array_job_from_inside_its_merge_job(tmp_path, monkeypatch):
+    from order_book.runner import IncompleteShards
+
+    out = tmp_path / "decomposition" / "any_folder"
+    monkeypatch.setenv("SLURM_JOB_NAME", "e8_deep_cover_merge")
+    assert "ARRAY=3,7 bash hpc/submit.sh decomposition e8_deep_cover\n" in str(IncompleteShards([3, 7], out)) + "\n"
+    monkeypatch.delenv("SLURM_JOB_NAME")
+    assert "ARRAY=3 bash hpc/submit.sh decomposition any_folder\n" in str(IncompleteShards([3], out)) + "\n"
