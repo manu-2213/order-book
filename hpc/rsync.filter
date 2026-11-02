@@ -1,0 +1,23 @@
+# What goes to the cluster: all the code, and from outputs/ only the inputs experiments read.
+# Results on the cluster are never touched, because nothing else under outputs/ is ever sent.
++ /outputs/
++ /outputs/calibration.json
++ /outputs/detectors/
++ /outputs/detectors/learned.npz
++ /outputs/stealth_execution/
++ /outputs/stealth_execution/rl/
++ /outputs/stealth_execution/rl/sweep/
++ /outputs/stealth_execution/rl/sweep/lr1e-3_ent0.003_ep4_sz0.20/
++ /outputs/stealth_execution/rl/sweep/lr1e-3_ent0.003_ep4_sz0.20/policy.pt
++ /outputs/stealth_execution/rl/sweep/lr1e-3_ent0.01_ep10_sz0.40/
++ /outputs/stealth_execution/rl/sweep/lr1e-3_ent0.01_ep10_sz0.40/best_policy.pt
+- /outputs/**
+- /.venv/
+- /.git/
+- /wandb/
+- /.pytest_cache/
+- __pycache__/
+- .ipynb_checkpoints/
+- .DS_Store
+- *.egg-info/
+- logs/

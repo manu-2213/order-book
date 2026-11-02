@@ -12,6 +12,8 @@ the unsigned signal. Weights go to outputs/detectors/learned.npz (loaded by the 
 import argparse
 import time
 
+from pathlib import Path
+
 import numpy as np
 
 from order_book.detectors.learned import collect_dataset, train
@@ -34,8 +36,10 @@ def main():
     parser.add_argument("--preset", choices=sorted(ADVERSARIES), default="A1-medium",
                         help="market the data is collected in (the makers' reaction is part of what is learnt)")
     parser.add_argument("--quick", action="store_true")
-    parser.add_argument("--out", default=str(WEIGHTS_PATH))
+    parser.add_argument("--out", default=None)
     args = parser.parse_args()
+    if args.out is None:  # a smoke test never overwrites the real one
+        args.out = str(WEIGHTS_PATH.with_name("learned_quick.npz") if args.quick else WEIGHTS_PATH)
     if args.quick:
         args.train_seeds, args.val_seeds, args.steps, args.burn_in, args.epochs = 2, 1, 3_000, 1_000, 3
     cfg = ADVERSARIES[args.preset].config()
@@ -49,7 +53,7 @@ def main():
           f"{counts[0] / len(y):.2f}/{counts[1] / len(y):.2f}/{counts[2] / len(y):.2f}; "
           f"data in {time.perf_counter() - t0:.0f}s")
     params = train(x, y, xv, yv, epochs=args.epochs, lr=args.lr, batch_size=args.batch_size, l2=args.l2)
-    WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     params.save(args.out)
     print(f"[train_detector] saved {args.out}; feature weights (buy - sell column):")
     for name, w in zip(params.feature_names, params.weights[:, 1] - params.weights[:, 2]):

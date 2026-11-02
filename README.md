@@ -71,30 +71,10 @@ Tests: `python -m pytest`
 
 ## Documentation
 
-`docs/simulator.tex` (compiled: `docs/simulator.pdf`, 26 pages) is the complete, self-contained technical
-and mathematical reference for the project. It includes:
-1. **Part I — Conceptual Primer & Codebase Navigation**: a beginner-friendly introduction to limit order
-   books, metaorders, implementation shortfall, mechanical market impact vs. information leakage, the
-   exact file-by-file module map, internal data structures (`OrderedDict` FIFO queues, sorted price lists,
-   running account reservations), and the 6-stage `Simulator.step()` execution pipeline.
-2. **Part II — The Simulator**: exact mathematical equations for `PublicState`, the `SeedSequence`
-   common-random-number tree, every background agent (`FundamentalValue`, `NoiseFlow`, `Speculators` with
-   Brock–Hommes switching, `InstitutionalTrader`, Avellaneda–Stoikov `MarketMaker` with volatility
-   fragility and detection response, `OrderAnticipator`), every detector (`FlowDetector`, `RunsDetector`,
-   `CusumDetector`, `VolumeClockDetector`, `RegularityDetector`, and the 3-class `LearnedDetector`), and
-   Phase 1 stylised-facts and square-root impact validation (`outputs/validation_default.json`).
-3. **Part III — Phase 2 Measurement & Counterfactual Experiments**: mathematical definitions of all 12
-   baseline strategies, A0 parameter calibration (`outputs/calibration.json`), Mann–Whitney ROC AUC and
-   paired-bootstrap protocol, and full empirical tables for **E2** (`outputs/e2/summary.json`), **E3**
-   (`outputs/e3/summary.json`), **E7** (`outputs/e7/summary.json`), and **E7b** (`outputs/e7b/summary.json`).
-4. **Part IV — Phase 3 RL Executor & Hyperparameter Sweep**: the 13-feature sign-normalised observation
-   space, 15-way `(size_mult, placement)` action grid, telescoping implementation-shortfall reward
-   theorem, `PolicyNet` actor–critic architecture, GAE + clipped PPO trainer, parallel W&B sweep runner
-   (`scripts/sweep_rl.py`), and the sweep results (`outputs/rl/sweep/summary.json`) showing the learned
-   policy beating TWAP at both $Q/V = 0.20$ ($+2.40$ vs. $+2.82$ bps) and $Q/V = 0.40$ ($+4.74$ vs.
-   $+5.12$ bps).
-
-Build the PDF with `cd docs && latexmk -pdf simulator.tex`.
+`docs/simulator.tex` (compiled: `docs/simulator.pdf`) is the technical and mathematical reference: a primer, the file-by-file map,
+the 6-stage `Simulator.step()` pipeline, the equations of `PublicState`, every agent and detector, Phase 1 validation, the execution
+baselines and calibration, the E2/E3/E7 record, the RL executor, and the counterfactual machinery (reaction channels, the ghost arm,
+paired seeds). Results specific to a later study are in that paper's folder. Build with `cd docs && latexmk -pdf simulator.tex`.
 
 ## Layout
 
@@ -117,18 +97,26 @@ order_book/              the library (pip install -e .)
                          Phase 3 RL executor (features, policy, env, ppo)
   detectors/             + features.py, statistical.py (A2: runs, cusum, volume_clock, regularity),
                          learned.py (A3: logistic classifier on public features)
-  scoring.py             ROC AUC, detection delay, false alarms; bootstrap CI, paired diff, CVaR, Holm
-  experiments.py         AdversarySpec, EpisodeSpec, E2/E3/E7/E7b configs, runner and summaries
+  rng.py                 KeyedStream: counter-based draws addressed by (seed, agent, step, purpose, index)
+  ghost.py               GhostMarket: live copy of a book replaying its order flow, for the ghost arm
+  scoring.py             ROC AUC, detection delay, false alarms; bootstrap CI, paired diff, CVaR, Holm, CRN diagnostics
+  experiments.py         AdversarySpec, EpisodeSpec, RegimeSpec, the episode runner
+  counterfactual.py      Channels, PairedRun (Arm 0 and a treated world in lockstep), run_paired
+  runner.py              the process pool and the resumable result log
+  provenance.py          SIMULATOR_VERSION and the manifest next to every result
   env.py                 OrderBookEnv: generic-trader Gymnasium prototype (execution uses execution/env.py)
-scripts/                 CLI entry points, run as python -m scripts.<name>; write to outputs/
-tests/                   pytest suite (python -m pytest)
-docs/                    LaTeX documentation
+scripts/                 simulator-level tools: validate, impact, calibrate, train_detector, benchmark, run, animate
+papers/<name>/           one study: experiments, scripts/, tests/, slurm/, paper/, results/, README.md
+hpc/                     cluster runbook, sync, environment and submission
+tests/                   library tests (python -m pytest also collects papers/*/tests)
+docs/                    the simulator reference
+outputs/                 gitignored: calibration and detector inputs at the top, each paper's runs in outputs/<name>/
 ```
 
-Dependency direction is strictly downward: `book` <- `market`/`public_state`
-<- `detectors` <- `agents` <- `simulator` <- `presets`/`history`/`validation`/`impact`/`execution`/`env`
-<- `experiments` <- `scripts`. The book never imports anything above it; agents never touch the book except
-through `Market`; detectors read only `PublicState`.
+Dependency direction is strictly downward: `book` <- `market`/`public_state`/`rng`
+<- `detectors` <- `agents` <- `simulator`/`ghost` <- `presets`/`history`/`validation`/`impact`/`execution`/`env`
+<- `experiments`/`counterfactual` <- `scripts` <- `papers`. The book never imports anything above it; agents never touch the
+book except through `Market`; detectors read only `PublicState`; papers never import each other (`tests/test_layout.py`).
 
 ## Configuration
 
@@ -158,6 +146,8 @@ a4 = Simulator(seed=0, config=adversary("A4", "strict"))
   `reseed()` re-derives every stream in place; `new_stream()` / `add_external()` give an executor or an
   injected metaorder its own stream outside the scheduler's permutation, so a run with and without it
   shares the background randomness (common random numbers) and their difference is the order's impact.
+  `SimConfig(rng="counter")` replaces the sequential streams with draws addressed by (agent, step, purpose),
+  which keeps the pairing even when an intervention changes how often an agent draws.
 - **Market / PublicState.** Accounting with exact reservations and conservation; a per-step public view
   (mid, spread, fast/slow EWMAs of mid, variance and volume, three momentum indicators, rolling signed
   flow imbalance, attention). No interpretation lives here.
@@ -191,7 +181,7 @@ Commands (from the repo root; outputs go to `outputs/`):
 
 ```sh
 pip install -e .                          # or: uv pip install -e .
-python -m pytest                          # 134 tests, ~8 s
+python -m pytest                          # 292 tests, ~45 s
 python -m scripts.validate                # stylised facts + paired impact, 5 seeds x 10k steps
 python -m scripts.validate --seeds 10 --steps 50000 --preset private
 python -m scripts.impact --seeds 20       # paired square-root impact, saves paths
@@ -202,60 +192,18 @@ python -m scripts.batch                   # 100 seeds x 10k steps in parallel ->
 python -m scripts.burn_in --seeds 8       # RL start-state pool -> outputs/states.pkl
 ```
 
-## Phase 2: measurement without RL (plan sections 5.1, 6, 7, 9, 10)
+## Papers and the cluster
 
-- **Execution task** (`execution/task.py`): side, Q = fraction x expected volume x T (T = 2000, N = 5),
-  hard limits (2 resting orders, 5 ticks through the best, optional participation cap), forced
-  completion at T counted in full. `ExecutorAgent` is an external agent with its own RNG stream.
-- **Baselines** (`execution/strategies.py`): immediate, twap_market, twap_passive, twap_random, pov,
-  almgren_chriss_{1e-7,1e-6,1e-5}, obizhaeva_wang, limit_market, footprint, mimic. Model-based ones read
-  a `Calibration` (sigma, temporary/permanent impact, resilience, depth, fill probabilities) fitted under
-  A0 by `scripts/calibrate.py`.
-- **Adversaries**: A0, A1 (lenient/medium/strict flow detector), A4 (A1 + anticipator) as markets; A1
-  thresholds, A2 (runs, CUSUM, volume clock, regularity) and A3 (learned, `scripts/train_detector.py`)
-  as observers scored on ground truth.
-- **E2** (`scripts/e2_detectability.py`): ROC AUC / delay / false alarms of every detector on every
-  classic strategy and size in the A1-medium market.
-- **E3** (`scripts/e3_leakage.py`): every baseline x size x {A0, A1-medium, A4} x {visible, invisible}
-  on the same seeds (+ no-executor runs); leakage = IS(visible) - IS(invisible) paired by seed with
-  bootstrap CI, p-value and Holm correction; prints the Phase 2 gate verdict.
-- **E7** (`scripts/e7_regimes.py`): the same counterfactual across a grid of market regimes
-  (`regime(liquidity, institutions, makers, mm_size_scale)`) and executor sizes, mapping where leakage
-  appears as liquidity and institutional cover fall and the order becomes a large share of flow (H4).
+Studies built on the library live in `papers/`, one folder per paper, each with its own experiments, scripts, tests, Slurm
+jobs and notes. `papers/README.md` has the rules and how to add one.
 
-```sh
-python -m scripts.calibrate                        # ~3 min; writes outputs/calibration.json
-python -m scripts.train_detector                   # verbose per epoch; writes outputs/detectors/learned.npz
-python -m scripts.e2_detectability --workers 8     # 420 episodes -> outputs/e2/
-python -m scripts.e3_leakage --workers 8 --paths   # 4,380 episodes -> outputs/e3/ (gate verdict at the end)
-python -m scripts.e7_regimes --workers 8           # leakage across market regimes -> outputs/e7/
-python -m scripts.e7_strength --workers 8          # detector-strength sweep in low-cover -> outputs/e7b/
-python -m scripts.<any> --quick                    # smoke test in seconds
-```
+| Paper | Question | Start at |
+|---|---|---|
+| `papers/stealth_execution/` | Can an executor hide from detecting liquidity providers? E2, E3, E7, the RL executor | its `README.md` |
+| `papers/decomposition/` | How much of a metaorder's cost is consumption and how much is reaction? E8, the protocol, the detection curve | its `README.md` |
 
-## Phase 3: RL executor (`order_book/execution/`)
-
-The learned executor is built on the Phase 2 machinery: it is one more `Strategy` carried by the same
-`ExecutorAgent`, with the same hard limits and forced completion, so it is scored by the same
-experiments as the baselines.
-
-- **MDP** (`execution/features.py`): a 13-feature, public-data-only observation (own progress, schedule
-  gap, footprint share, imbalance, momentum, running shortfall, ...) and a 15-way `size x placement`
-  action grid; the reward is telescoping implementation shortfall in bps (an episode's rewards sum to
-  minus its quantity-weighted shortfall).
-- **Environment** (`execution/env.py`): `ExecutionEnv.rollout` runs whole episodes in the E7b candidate
-  market (`phase3_config`: liquid `low_cover`, two detecting makers); `PolicyStrategy`/`PolicyNet` are
-  the actor-critic policy.
-- **Training** (`execution/ppo.py`, `scripts/train_rl.py`): PyTorch PPO over whole episodes, verbose per
-  iteration, with periodic greedy evaluation against TWAP.
-
-```sh
-python -m scripts.train_rl --iterations 300 --episodes 32 --wandb   # -> outputs/rl/policy.pt, best_policy.pt, history.json
-python -m scripts.sweep_rl --workers 6 --wandb --sync-existing      # parallel sweep, live stdout + W&B, resumable
-python -m scripts.train_rl --quick                                  # smoke test, ~1 min
-# score the trained policy against the baselines through the leakage counterfactual:
-python -m scripts.e7_strength --strategies rl@outputs/rl/policy.pt twap_market --workers 8
-```
+Full runs go to the QMUL cluster: `hpc/README.md` is the runbook. Every result is written with a `manifest.json` naming the
+`SIMULATOR_VERSION`, commit, configuration and machine it came from.
 
 ## Generic-trader prototype (`order_book/env.py`)
 

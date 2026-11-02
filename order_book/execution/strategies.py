@@ -91,6 +91,39 @@ class Pov(Strategy):
         return Decision(market_qty=max(0, target - s.executed))
 
 
+class DialTwap(Strategy):
+    """TWAP with three independent dials, for the detection curve.
+
+    ``timing``: probability of skipping a decision (timing jitter); the slices
+    that do go out are scaled by 1 / (1 - timing), so the expected schedule stays
+    linear and only the regularity changes. Without that, heavy skipping back-loads
+    the order into the horizon, as ``TwapRandom`` does mildly. ``size``: relative
+    +/- jitter on each slice (size jitter). ``passive``: share of each slice posted
+    at own best; at the next decision the unfilled part is crossed, as
+    ``TwapPassive`` does, so nothing piles up into a forced block at the horizon.
+    All at zero it is ``TwapMarket``; with ``passive=1`` alone it is ``TwapPassive``.
+    The share that actually filled passively is an outcome.
+    """
+
+    def __init__(self, size: float = 0.0, timing: float = 0.0, passive: float = 0.0):
+        self.size, self.timing, self.passive = size, timing, passive
+        self.name = f"twap@size={size:g},timing={timing:g},passive={passive:g}"
+
+    def reset(self, s: ExecState, rng) -> None:
+        self.target = 0
+
+    def decide(self, s: ExecState, rng) -> Decision:
+        if s.decisions_left > 1 and rng.random() < self.timing:
+            return Decision()
+        catch_up = max(0, self.target - s.executed)
+        jitter = rng.uniform(1 - self.size, 1 + self.size)
+        pace = max(0, s.remaining - catch_up) / s.decisions_left / (1 - self.timing)
+        qty = min(math.ceil(pace * jitter), max(0, s.remaining - catch_up))
+        passive = round(qty * self.passive)
+        self.target = s.executed + catch_up + qty
+        return Decision(cancel=bool(self.passive), market_qty=catch_up + qty - passive, limit_qty=passive)
+
+
 # ----- model-based schedules -------------------------------------------------------------- #
 
 class _ScheduleFollower(Strategy):
@@ -285,10 +318,16 @@ def all_baselines(calibration: Calibration | None = None) -> dict[str, Strategy]
 
 
 def make_strategy(name: str, calibration: Calibration | None = None) -> Strategy:
-    """Build a baseline by name, or a trained RL executor with ``"rl@<path-to-weights>"``."""
+    """Build a baseline by name, a trained RL executor with ``"rl@<path-to-weights>"``, a fixed-rate POV with
+    ``"pov@0.05"``, or a dialled TWAP with ``"twap@size=0.5,timing=0.3,passive=0.25"`` (omitted dials are 0)."""
     if name.startswith("rl@"):
         from order_book.execution.policy import PolicyStrategy  # lazy: torch only needed for the learned policy
         return PolicyStrategy.from_file(name[3:], deterministic=True)
+    if name.startswith("pov@"):
+        return Pov(float(name[4:]))
+    if name.startswith("twap@"):
+        dials = dict(item.split("=") for item in name[5:].split(",") if item)
+        return DialTwap(**{k: float(v) for k, v in dials.items()})
     strategies = all_baselines(calibration)
     if name not in strategies:
         raise KeyError(f"unknown strategy {name!r}; available: {sorted(strategies)}")

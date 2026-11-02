@@ -16,7 +16,13 @@ class OrderAnticipator(Agent):
     liquidity at the start, as van Kervel & Menkveld report) until the
     signal has been confident for ``switch_after`` steps, then with it.
     A false alarm therefore costs it the round trip.
+
+    With ``active = False`` it never acts. The channel decomposition keeps a
+    dormant anticipator in the population instead of removing it, so every arm
+    shares the scheduler's permutation over the same list of agents.
     """
+
+    active = True
 
     def __init__(self, *args, cfg: OrderAnticipatorConfig | None = None, detector: Detector):
         super().__init__(*args)
@@ -26,6 +32,8 @@ class OrderAnticipator(Agent):
         self.confident_steps = 0
 
     def act(self) -> None:
+        if not self.active:
+            return
         m, cfg, signal = self.market, self.cfg, self.detector.signal
         position = self.account.shares - self.target
         strength = abs(signal)

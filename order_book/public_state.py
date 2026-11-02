@@ -17,6 +17,10 @@ class PublicState:
     rises with relative volatility and volume (activity clustering). Anything
     that *interprets* these statistics (e.g. a metaorder detector) lives in
     ``order_book.detectors``.
+
+    ``imbalance`` and ``buy_flow``/``sell_flow`` omit aggressors hidden by
+    ``Market.hide``; ``imbalance_all`` and ``buy_flow_all``/``sell_flow_all``
+    never do. They are equal unless a counterfactual hides someone.
     """
 
     def __init__(self, mid: int, cfg: PublicStateConfig | None = None):
@@ -43,6 +47,10 @@ class PublicState:
         self._buy = [0] * cfg.flow_window
         self._sell = [0] * cfg.flow_window
         self.buy_flow = self.sell_flow = 0
+        self._buy_all = [0] * cfg.flow_window
+        self._sell_all = [0] * cfg.flow_window
+        self.buy_flow_all = self.sell_flow_all = 0
+        self.imbalance_all = 0.0
         self._n = 0
 
     def update(self, book: OrderBook, buy_volume: int, sell_volume: int, last: int | None,
@@ -78,6 +86,11 @@ class PublicState:
         self._buy[i], self._sell[i] = flow_buy, flow_sell
         total = self.buy_flow + self.sell_flow
         self.imbalance = (self.buy_flow - self.sell_flow) / total if total else 0.0
+        self.buy_flow_all += buy_volume - self._buy_all[i]
+        self.sell_flow_all += sell_volume - self._sell_all[i]
+        self._buy_all[i], self._sell_all[i] = buy_volume, sell_volume
+        total = self.buy_flow_all + self.sell_flow_all
+        self.imbalance_all = (self.buy_flow_all - self.sell_flow_all) / total if total else 0.0
         self._n += 1
         self.step_count = self._n
         if self._n * self._a_slow > 1:  # past the slow warm-up; before it the ratios are meaningless

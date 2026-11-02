@@ -14,6 +14,7 @@
 \usepackage[htt]{hyphenat}
 \usepackage{hyperref}
 \usepackage{microtype}
+\usepackage{adjustbox}
 
 \hypersetup{colorlinks=true, linkcolor=blue!60!black, urlcolor=blue!60!black, citecolor=blue!60!black}
 
@@ -69,7 +70,7 @@ E7, and E7b). Finally, Part~\ref{part:three} documents the Phase~3 reinforcement
 environment (\code{ExecutionEnv}), the 13-dimensional sign-normalised observation encoder, the 15-way
 action space, the telescoping implementation-shortfall reward theorem, the Proximal Policy
 Optimisation (\code{PPOTrainer}) implementation, the parallel Weights \& Biases hyperparameter sweep
-(\code{sweep\_rl.py}), and the empirical results showing the learned policy outperforming TWAP.
+(\code{sweep\_rl.py}), and its results, which show the learned policy ahead of TWAP on the seeds it was selected on but not on unseen ones. Part~\ref{part:decomposition} documents the two-world counterfactual machinery that later studies build on: the ghost arm, four independently switchable reaction channels and a counter-based paired-seed protocol.
 \end{abstract}
 
 \tableofcontents
@@ -237,7 +238,7 @@ File / Module & Responsibility and Key Classes / Functions \\
 \code{order\_book/validation.py} & Stylised-facts suite and pass/fail table against plan \S4.2 targets. \\
 \code{order\_book/impact.py} & Natural-metaorder and paired-injection square-root impact measurement. \\
 \code{order\_book/scoring.py} & Mann--Whitney \code{roc\_auc} with tie handling, \code{detection\_delay}, \code{false\_alarm\_rate}, \code{activity\_labels}, \code{bootstrap\_ci}, \code{paired\_difference}, \code{cvar}, \code{holm}. \\
-\code{order\_book/experiments.py} & Phase~2 experiment harness: \code{AdversarySpec}, \code{EpisodeSpec}, \code{EpisodeResult}, \code{run\_episode}, parallel \code{run\_specs}, \code{E2Config}, \code{E3Config}, \code{RegimeSpec}, \code{E7Config}, \code{StrengthSpec}, \code{E7StrengthConfig}. \\
+\code{order\_book/experiments.py} & The experiment harness papers build on (studies now live in \code{papers/}): \code{AdversarySpec}, \code{EpisodeSpec}, \code{EpisodeResult}, \code{run\_episode}, parallel \code{run\_specs}, \code{E2Config}, \code{E3Config}, \code{RegimeSpec}, \code{E7Config}, \code{StrengthSpec}, \code{E7StrengthConfig}. \\
 \code{order\_book/env.py} & Legacy generic-trader Gymnasium wrapper (\code{OrderBookEnv}) using snapshot banks; superseded for optimal execution by \code{order\_book/execution/env.py}. \\
 \midrule
 \multicolumn{2}{l}{\textbf{Background Agent Population (\code{order\_book/agents/})}} \\
@@ -499,7 +500,7 @@ Calling \code{sim.market.hide(executor.cid)} adds the executor's client ID to
 makers, transfer cash and shares, move the mid-price, and count toward total traded volume, \emph{but}
 detectors and the public signed-flow ring buffer do not see the executor's aggressive trades. Comparing
 a run with \code{visibility="visible"} against \code{visibility="invisible"} on the same seed isolates
-the exact cost of detection (\S\ref{sec:e3}).
+the exact cost of detection (\S\ref{sec:e3}). The complete flow stays available as \code{public.imbalance\_all}, which is what the executor reads, so hiding it changes what detectors see and not what it decides on. It does not isolate the mechanical cost: a hidden executor still moves the mid, and every reaction to that remains. Part~\ref{part:decomposition} separates them.
 
 %==================================================================================================
 \section{Rolling Public State (\code{order\_book.public\_state})}
@@ -599,6 +600,7 @@ This design provides four mathematical guarantees verified in \code{tests/test\_
   random numbers for the hidden fundamental value, the scheduler's permutation, and every background
   agent up to the step where the book state itself first differs.
 \end{enumerate}
+That last guarantee is the weak one: after the first difference, a state-dependent number of draws shifts each stream for good. \code{SimConfig(rng="counter")} replaces these streams with draws addressed by agent, step and purpose, and the default stays as described here so that all stored results reproduce (\S\ref{sec:protocol}).
 
 %==================================================================================================
 \section{Mathematical Specification of Every Background Agent (\code{order\_book.agents})}
@@ -1091,11 +1093,11 @@ Strategy & $Q/V$ & Adversary & $\text{IS}_{\text{vis}}$ & $\text{IS}_{\text{invi
 \code{twap\_market} & $0.10$ & A4        & $+1.90$ & $+1.70$ & $+0.20\;[-0.11, +0.55]$ & $0.114$ & $1.000$ \\
 \code{twap\_market} & $0.20$ & A1-medium & $+2.67$ & $+2.55$ & $+0.12\;[-0.22, +0.52]$ & $0.288$ & $1.000$ \\
 \code{twap\_passive} & $0.20$ & A1-medium & $+2.39$ & $+2.19$ & $+0.20\;[-0.05, +0.48]$ & $0.068$ & $1.000$ \\
-\code{footprint} & $0.20$ & A1-medium & $+2.36$ & $+2.38$ & $-0.01\;[-0.27, +0.25]$ & $0.561$ & $1.000$ \\
+\code{footprint} & $0.20$ & A1-medium & $+2.36$ & $+2.41$ & $-0.05\;[-0.44, +0.29]$ & $0.595$ & $1.000$ \\
 \code{mimic} & $0.20$ & A1-medium & $+3.19$ & $+3.03$ & $+0.16\;[-0.07, +0.41]$ & $0.092$ & $1.000$ \\
 \bottomrule
 \end{tabular}
-\caption{Selected rows from the full E3 leakage experiment (\code{outputs/e3/summary.json}, 20 test seeds).
+\caption{Selected rows from the full E3 leakage experiment (\code{outputs/stealth\_execution/e3/summary.json}, 20 test seeds).
 Under \code{A0}, $\text{IS}_{\text{vis}} - \text{IS}_{\text{invis}} \equiv 0.00$ identically on every row.}
 \label{tab:e3_results}
 \end{table}
@@ -1116,9 +1118,9 @@ Under \code{A0}, $\text{IS}_{\text{vis}} - \text{IS}_{\text{invis}} \equiv 0.00$
   natural cover that a $5\%$--$20\%$ TWAP is already hidden}.
 \end{enumerate}
 
-\subsection{Experiment E7 (\code{outputs/e7/summary.json}): Mapping Leakage Across Market Regimes}
+\subsection{Experiment E7 (\code{outputs/stealth\_execution/e7/summary.json}): Mapping Leakage Across Market Regimes}
 
-Motivated by the E2/E3 finding, E7 (\code{scripts/e7\_regimes.py}) swept six market regimes built via
+Motivated by the E2/E3 finding, E7 (\code{papers/stealth\_execution/scripts/e7\_regimes.py}) swept six market regimes built via
 \code{presets.regime(liquidity, institutions, makers, mm\_size\_scale)} across $Q/V \in \{0.20, 0.40\}$
 ($2\,160$ episodes).
 
@@ -1140,7 +1142,7 @@ Regime & Liq. & Inst. & Strategy & $Q/V$ & $\bar V$/stp & $\text{IS}_{\text{vis}
 \code{thin\_no\_cover} & $0.4$ & $0$ & \code{twap\_market}  & $0.20$ & $1.1$ & $+18.45$& $+14.38\;[-3.34, +47.12]$ & $0.32$ & $0.32$ \\
 \bottomrule
 \end{tabular}
-\caption{Key rows from the E7 regime sweep under \code{A1-medium} (\code{outputs/e7/summary.json}).
+\caption{Key rows from the E7 regime sweep under \code{A1-medium} (\code{outputs/stealth\_execution/e7/summary.json}).
 ``Fire'' is the mean $|s_t|$ of the flow detector over the executor's active window.}
 \label{tab:e7_results}
 \end{table}
@@ -1159,10 +1161,10 @@ Regime & Liq. & Inst. & Strategy & $Q/V$ & $\bar V$/stp & $\text{IS}_{\text{vis}
   confidence intervals to $\pm 50\text{ bps}$.
 \end{enumerate}
 
-\subsection{Experiment E7b (\code{outputs/e7b/summary.json}): Detector-Strength Sweep in \code{low\_cover}}
+\subsection{Experiment E7b (\code{outputs/stealth\_execution/e7b/summary.json}): Detector-Strength Sweep in \code{low\_cover}}
 
 Holding the market at the stable, liquid \code{low\_cover} regime (liquidity $= 1.0$, institutions $= 1$),
-E7b (\code{scripts/e7\_strength.py}) swept four detector strengths defined in
+E7b (\code{papers/stealth\_execution/scripts/e7\_strength.py}) swept four detector strengths defined in
 \code{experiments.DETECTION\_STRENGTHS}:
 \begin{itemize}[nosep]
 \item \code{weak}: $\theta_d = 0.45$ (strict), $2$ detecting makers, $(\delta_{\text{skew}}, \delta_{\text{widen}}, \delta_{\text{cut}}) = (4, 3, 0.7)$;
@@ -1199,7 +1201,7 @@ Strength & Strategy & $Q/V$ & $Q$ (lots) & $\text{IS}_{\text{vis}}$ & $\text{IS}
 \bottomrule
 \end{tabular}
 \caption{Complete results of the E7b detector-strength sweep in the liquid \code{low\_cover} regime
-(\code{outputs/e7b/summary.json}, 20 test seeds).}
+(\code{outputs/stealth\_execution/e7b/summary.json}, 20 test seeds).}
 \label{tab:e7b_results}
 \end{table}
 
@@ -1219,7 +1221,7 @@ was selected as \code{phase3\_config()}.
 %==================================================================================================
 
 Phase~3 (\code{order\_book/execution/features.py}, \code{policy.py}, \code{env.py}, \code{ppo.py}, and
-\code{scripts/train\_rl.py}, \code{scripts/sweep\_rl.py}) embeds a learned policy directly inside the
+\code{papers/stealth\_execution/scripts/train\_rl.py}, \code{papers/stealth\_execution/scripts/sweep\_rl.py}) embeds a learned policy directly inside the
 Phase~2 \code{ExecutorAgent}. Because \code{PolicyStrategy} subclasses \code{Strategy}, the RL agent
 faces the \emph{exact same} \code{ExecState}, order-placement rules, resting-order caps, price
 protection, and horizon forced completion as every analytical baseline.
@@ -1336,7 +1338,6 @@ critic heads:
 \begin{align}
   \mathbf{h}_1 &= \tanh(\mathbf{W}_1 \mathbf{o}_k + \mathbf{b}_1) \in \mathbb{R}^{64}, \\
   \mathbf{h}_2 &= \tanh(\mathbf{W}_2 \mathbf{h}_1 + \mathbf{b}_2) \in \mathbb{R}^{64}, \\
-\begin{align}
   \text{Action logits:}\quad \boldsymbol{\ell}_k &= \mathbf{W}_{\pi} \mathbf{h}_2 + \mathbf{b}_{\pi} \in \mathbb{R}^{15}, \\
   \pi_\theta(a \mid \mathbf{o}_k) &= \operatorname{Categorical}(\text{logits}=\boldsymbol{\ell}_k), \\
   \text{State value:}\quad V_\theta(\mathbf{o}_k) &= \mathbf{w}_V^\top \mathbf{h}_2 + b_V \in \mathbb{R}.
@@ -1374,9 +1375,12 @@ clipping at $0.5$) minimising the combined loss:
 \end{align}
 
 %==================================================================================================
-\section{Phase 3 Hyperparameter Sweep and Empirical Results (\code{outputs/rl/sweep/})}
+\section{Phase 3 Hyperparameter Sweep and Empirical Results (\code{outputs/stealth\_execution/rl/sweep/})}
 \label{sec:rl_results}
 %==================================================================================================
+
+\paragraph{Selection bias.} The results below were selected and scored on the same seeds, $1000$--$1039$. Re-evaluated by \code{rl\_heldout.py} on 80 seeds never used for selection, these policies are behind TWAP: $+0.39$ bps $[+0.03, +0.76]$ at $Q/V = 0.2$ and $+0.21$ bps $[-0.00, +0.44]$ at $0.4$. The results are kept as the record of the sweep; do not quote the gains without this.
+
 
 We ran a grid sweep in the Phase~3 target market (\code{phase3\_config(institutions=1)}: liquid
 \code{low\_cover} with 1 background institution and 2 detecting market makers at default response) across:
@@ -1395,7 +1399,7 @@ seeds, the deterministic \code{twap\_market} baseline achieves:
 \end{itemize}
 
 Table~\ref{tab:rl_sweep} reports the top-performing configurations from the completed sweep runs in
-\code{outputs/rl/sweep/summary.json} (ranked by best held-out greedy shortfall among high-completion
+\code{outputs/stealth\_execution/rl/sweep/summary.json} (ranked by best held-out greedy shortfall among high-completion
 checkpoints $\text{completion} \ge 0.98$).
 
 \begin{table}[h!]
@@ -1423,7 +1427,7 @@ Sweep Config Tag & $Q/V$ & Best IS & Compl. & Iter & Last IS & Last Compl. & TWA
 \bottomrule
 \end{tabular}
 \caption{Hyperparameter sweep results on 40 held-out test seeds ($1000..1039$) in the Phase~3
-\code{low\_cover} market (\code{outputs/rl/sweep/summary.json}). All shortfalls include forced market
+\code{low\_cover} market (\code{outputs/stealth\_execution/rl/sweep/summary.json}). All shortfalls include forced market
 completion at the horizon.}
 \label{tab:rl_sweep}
 \end{table}
@@ -1444,6 +1448,192 @@ completion at the horizon.}
 \end{enumerate}
 
 %==================================================================================================
+\part{The Counterfactual Machinery: Reaction Channels, the Ghost Arm, Paired Seeds}
+\label{part:decomposition}
+%==================================================================================================
+
+The leakage counterfactual of \S\ref{sec:e3} answers one question: what does it cost that detectors can see the
+executor? It cannot answer the larger one, because \code{Market.hide} only blinds the detector. A hidden executor
+still moves the mid, so trend followers react to it and market makers still skew on the inventory it pushes onto them,
+and all of that sits inside what E3 calls impact cost. This part builds the instrument for the larger question:
+how much of implementation shortfall is liquidity the order mechanically consumed, and how much is the market's
+reaction, split into inventory, price, detection and predation.
+
+The code is in \code{order\_book/counterfactual.py} (the worlds), \code{ghost.py} (the copy book) and \code{rng.py} (the draws). This part
+documents that machinery, which any study can use. The first study built on it, with its accounting, experiments, results and caveats, is in \code{papers/decomposition/}
+(working notes: \code{paper/notes.pdf}).
+
+%==================================================================================================
+\section{Reaction Channels and Arms}
+\label{sec:channels}
+%==================================================================================================
+
+Every run steps two worlds in lockstep: a \textbf{reference} world, Arm~0, that never contains an executor, and a
+\textbf{treated} world where the executor trades. Four switches (\code{Channels}) decide which reactions to the
+executor exist in the treated world:
+
+\begin{center}\small
+\begin{tabular}{@{}lL{5.6cm}L{5.6cm}@{}}
+\toprule
+Channel & On & Off \\
+\midrule
+$I$ inventory & makers skew their reservation on their holding in the treated world & makers skew on their holding in Arm~0 (\code{MarketMaker.skew\_account}) \\
+$P$ price & the background lives on the true book and reads its public state & the background acts in Arm~0; its order flow is replayed on a copy of the book \\
+$D$ detection & the makers' flow detector reads the complete flow & it reads the flow without the executor (\code{hide}) \\
+$A$ predation & the anticipator trades, on a detector that reads the complete flow & the anticipator stays dormant \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All four off is the \textbf{ghost arm}; all four on is the full A4 market. The switches are independent, which makes
+$2^4 = 16$ worlds per seed. The population always contains the anticipator, dormant when off, so every world shares one
+scheduler permutation; removing it would change the length of the permuted list and with it every agent's position.
+
+The natural ladder of the research plan is the chain of nested arms in Table~\ref{tab:arms}.
+
+\begin{table}[h]\centering\small
+\caption{The arms. Arm~$k$ adds one thing to Arm~$k-1$.}\label{tab:arms}
+\begin{tabular}{@{}clL{9cm}@{}}
+\toprule
+Arm & \code{Channels.key} & Treated world \\
+\midrule
+0 & & no executor \\
+1 & \code{----} & ghost: the executor fills against a live copy of Arm~0's book; the background observes and acts on Arm~0 \\
+2 & \code{-P--} & true book, reservation on Arm-0 inventory, detector blind \\
+3 & \code{IP--} & true book and inventory, detector blind (what E3 calls ``invisible'') \\
+4 & \code{IPD-} & the detector sees the executor (A1) \\
+5 & \code{IPDA} & the anticipator trades (A4) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{What the increments mean.} The increments are named here by what actually changes between two arms.
+The research plan's table attaches ``inventory skew'' to the step into Arm~2 and ``chartist response'' to the step into
+Arm~3, but Arm~2 as written freezes inventory, so Arm~$2-$Arm~1 is the move onto the true book and Arm~$3-$Arm~2 is the
+inventory channel. The order the plan's labels name, inventory first, is also available (\code{PLAN\_LABEL\_ORDER},
+reported as \code{ladder\_plan\_order}), since both chains are paths through the same 16 cells.
+
+\paragraph{The price channel is not only chartists.} It holds every reaction to the true book: chartists chase the move,
+fundamentalists lean against it, makers re-centre their quotes on it and thin out with its volatility, noise traders place
+relative to the moved quotes. Three controls outside the factorial look inside it. Each repeats Arm~2 with one group pointed
+at Arm~0's public state while everything else stays live: \code{-P--c} blinds chartists' momentum, \code{-P--m} blinds
+the makers' mid and volatility, \code{-P--f} blinds the mid fundamentalists compare with their belief. The control
+\code{IPD-b} is Arm~4 with an anticipator that trades but cannot see the executor, which separates the effect of having it
+trade on natural flow from the effect of it seeing the executor.
+
+%==================================================================================================
+\section{The Ghost Arm}
+\label{sec:ghost}
+%==================================================================================================
+
+\code{GhostMarket} forks a \code{Market} after the burn-in: a deep copy of the book, the accounts and the public state. It
+then acts as the source market's \code{mirror}, which is told of every order and cancel that reached the source book. The
+background keeps acting on the source, which never learns the executor exists; the executor trades only on the copy. The
+two books diverge as soon as it trades, so replaying an order needs a rule. The rule treats each lot as what it was in Arm~0:
+
+\begin{description}[nosep]
+\item[R1, takers.] A lot that traded in Arm~0 takes liquidity. It is replayed immediate-or-cancel at its own limit (market
+  orders at no limit) and walks the copy's book by the ordinary price--time matching. If the copy has nothing at that price
+  it lapses. Its sender wanted to trade now; resting it would create a quote that no owner will ever cancel.
+\item[R2, makers.] A lot that rested in Arm~0 makes liquidity. It rests at its own price, clamped post-only to one tick
+  behind the copy's opposite best if it would cross there (the rule makers already apply to themselves), and is dropped if that
+  price is outside the copy's window.
+\item[R3, removals.] A cancel, eviction or self-trade removal in Arm~0 removes the order's counterpart in the copy, if it is
+  still there.
+\item[R4, orphans.] An order that fully traded in Arm~0 but still rests in the copy has no owner who will cancel it. This
+  arises when the executor's passive order took the fill the Arm-0 order got. It stays, because the executor really did add
+  that much liquidity, but expires after \code{orphan\_ttl} steps (default 50, the order of magnitude of a background order's
+  life) so it cannot pile up into a wall no real population would maintain.
+\item[R5, budgets.] Only the executor is budget-checked. The background's accounts in the copy are shadows of orders funded in
+  Arm~0 and may go negative; cash and shares are still conserved across the copy.
+\end{description}
+
+With no executor the copy reproduces the source exactly; \code{tests/test\_counterfactual.py} asserts this tick for tick.
+\code{GhostMarket.stats} counts every intervention of the rule (lapsed lots, clamps, drops, orphans, expiries), and each run
+reports them.
+
+%==================================================================================================
+\section{Realising the Channels}
+\label{sec:lockstep}
+%==================================================================================================
+
+Each pair of agents acts in the same scheduled position, treated first, so a treated agent reads the reference exactly as its
+twin is about to. This is why the worlds coincide in every configuration when there is nothing to react to.
+
+\paragraph{With $P$ on,} the treated world is a clone of the reference taken from the burn-in snapshot, with its agents acting
+on what they see there. $I$ off points each maker's skew at its twin's account. Only the reservation is frozen: the
+\code{max\_inventory} pull is a risk limit and keeps using the maker's real holding. $D$ off leaves the executor out of the flow
+the makers' detector reads.
+
+\paragraph{With $P$ off,} the background's orders come from Arm~0, so $I$ and $D$ cannot change a decision. They shade each replayed
+maker quote instead, by the difference between the copy's terms and Arm~0's, using the maker's own formula
+(\code{MarketMaker.shade}). With inventory $q$ and signal $s$ in the copy, and $q_0, s_0$ in Arm~0,
+\begin{align*}
+  \Delta_{\text{res}} &= \clamp(q_0\,\rho) - \clamp(q\,\rho) + \kappa_s (s - s_0), \qquad \rho = \gamma\,\max(\sigma^2_{\text{fast}}, \sigma^2_{\min})\,h,\\
+  p' &= \operatorname{round}\bigl(p + \Delta_{\text{res}} \pm (w(s) - w(s_0))\bigr),\qquad
+  x' = \max\bigl(1, \operatorname{round}(x\, c(s) / c(s_0))\bigr),
+\end{align*}
+where the sign is $+$ on the ask, and $w$ and $c$ are the widening and size multiplier the signal puts on that side (zero and one
+on the unpressured side). No order is created or retimed, and the shade is exactly zero when nothing has diverged, so a channel
+switched on with no divergence changes nothing. A shaded quote waits for the maker's next requote in Arm~0 to take effect.
+
+\paragraph{Predation} runs the same way in both: a live anticipator in the treated world, on its own detector. Makers and
+anticipator therefore switch independently, and $\{A\}$ without $\{D\}$ is well defined.
+
+\paragraph{The executor} reads the treated public state, with \code{imbalance\_all} in place of \code{imbalance}. Without this,
+hiding it would also change what it decides on, since a strategy that reads the flow would stop seeing its own part of it. That was a defect in E3 as first run: \code{footprint} showed nonzero leakage under A0, up to $+0.24$ bps, where nobody reads a detector and leakage must be exactly zero. E3 was regenerated after the fix: non-adaptive strategies are unchanged to the last digit, and A0 leakage is now exactly zero for every strategy and size.
+
+%==================================================================================================
+\section{A Paired-Seed Protocol for Agent-Based Counterfactuals}
+\label{sec:protocol}
+%==================================================================================================
+
+\emph{This section is written to stand alone, as the protocol section of a paper.}
+
+An agent-based market is a stochastic program. To estimate the effect of an intervention, one runs it with and without the
+intervention on shared random numbers, because the effect of interest is far smaller than the program's noise. Shared seeds are
+only a variance-reduction device if the two runs actually share noise. With stateful generators they stop doing so once the
+intervention changes control flow: a market maker that requotes one extra time consumes one extra draw, and every later draw of that
+agent shifts. The two runs then differ for reasons that have nothing to do with the intervention, which Buffalo, Pearson and Klein
+(2026) call causal incoherence. One stream per agent, the usual remedy, only confines the damage to one agent per event.
+
+\paragraph{Construction.} Each draw is made a pure function of its address. A \code{KeyedStream} holds a Philox key
+$(\text{seed}, \operatorname{crc32}(\text{label}))$ and no sequential state between calls. Asking for a draw names its step, its
+purpose (a small integer per decision an agent draws for) and, for a purpose drawn more than once per step, an index; the generator is
+rekeyed to the counter $(0, \text{step}+1, \text{purpose}, \text{index})$, and any partial word left over from an earlier address is
+discarded. Philox increments the first counter word per output block, so a sequence inside an address cannot run into another
+address. Rekeying costs about $1\,\mu$s, and a whole simulation runs about 18\% slower than with stateful streams.
+
+\paragraph{Properties}, each asserted in \code{tests/test\_rng.py}:
+\begin{enumerate}[nosep]
+\item What an agent draws at an address does not depend on how many draws it made before, or on what anyone else did.
+\item Identity is by label, not by position: adding or removing agents leaves everyone else's draws alone, and the executor's stream is the
+  same whether or not the population contains an anticipator.
+\item Arrays drawn at one address are stable in their prefix, with one address per attribute of an order. A Poisson count that differs
+  between two runs changes only the tail of an agent's orders.
+\item Poisson counts at one address are monotone in the rate (NumPy's multiplication sampler at rates below 10), so a small difference
+  in activity gives a small difference in orders. This is the monotone coupling common random numbers want.
+\item One code path serves both modes: \code{keyed(rng, step, purpose)} returns a stateful generator unchanged. Stateful runs are
+  byte-identical to before this machinery existed, which pins every earlier result.
+\end{enumerate}
+
+\paragraph{What it does not do.} An agent whose decision really differs still sends different orders, and a market that has diverged keeps
+diverging. Keying removes the spurious part of divergence, not the causal part. Hence the next two measurements.
+
+\paragraph{Variance reduction.} For a contrast between arms $a$ and $b$ over seeds,
+\[
+  \text{VR} = \frac{\Var(a) + \Var(b)}{\Var(a - b)},
+\]
+the factor by which pairing shrinks the variance of the estimated difference against independent seeds, as Klein et al.\ measure it.
+\code{crn\_diagnostics} reports it with a seed-bootstrap CI. It exceeds one exactly when $\operatorname{Cov}(a, b) > 0$, which is Sharma's
+positive-correlation condition, and we report the correlation with its CI and require the whole interval above zero. Both are computed per
+contrast and pairing scheme.
+
+\paragraph{Coupling.} \code{flow\_coupling} measures divergence directly: the Jaccard overlap of the multiset of background orders
+$(\text{step}, \text{client}, \text{side}, \text{size})$ between the two worlds, per fifth of the window. This shows where a shifted stream
+loses the pairing for good, which an aggregate variance ratio cannot.
+
+%==================================================================================================
 \part{Verification, Test Suite, and Complete Reproduction Guide}
 \label{part:four}
 %==================================================================================================
@@ -1453,7 +1643,7 @@ completion at the horizon.}
 \label{sec:tests}
 %==================================================================================================
 
-Running \code{python -m pytest} executes $134$ unit and integration tests in $\sim 8$ seconds:
+Running \code{python -m pytest} executes $292$ unit and integration tests in about 45 seconds, across \code{tests/} and \code{papers/*/tests/}:
 \begin{description}[nosep]
 \item[\code{test\_book.py}] OrderBook rules: empty and one-sided states, exact window boundaries and
   reported evictions, FIFO and partial fills on both sides, price protection of crossing limits, all four
@@ -1489,13 +1679,21 @@ Running \code{python -m pytest} executes $134$ unit and integration tests in $\s
 \item[\code{test\_scoring.py}] Mann--Whitney ROC AUC (perfect, inverted, tied, degenerate), detection
   delay, false-alarm rate, activity labels, percentile bootstrap CI, paired difference, CVaR$_{95}$, and
   Holm step-down adjustment.
-\item[\code{test\_experiments.py}] Episode parity, deterministic JSON-serializable \code{EpisodeResult},
+\item[\code{test\_experiments.py} (\code{papers/stealth\_execution/tests/})] Episode parity, deterministic JSON-serializable \code{EpisodeResult},
   exact equality of visible and invisible runs under A0, E2/E3/E7/E7b runners and summaries, impact paths.
 \item[\code{test\_env.py}] Legacy Gymnasium wrapper \code{OrderBookEnv} seeding, bounds, and pickling.
 \item[\code{test\_rl.py}] Phase~3 RL suite: 13-feature vector shape, finiteness, and buy/sell sign
   symmetry; 15-action decision mapping; exact telescoping equality $\sum_k r_k = -\text{IS (bps)}$;
   seed-deterministic rollouts; \code{PolicyNet} save/load round-trip; \code{make\_strategy("rl@...")};
   PPO weight update and finite losses; \code{phase3\_config}; and \code{sweep\_rl} job tagging and ranking.
+\item[\code{test\_rng.py}] Draws depend only on their address, with no leak of buffered words; prefix stability; Poisson counts monotone in the rate; one extra requote shifts every later draw of a stateful stream and none of a keyed one; determinism, snapshot and reseed in counter mode; streams keyed by label.
+\item[\code{test\_simulator\_version.py}] A fingerprint per \code{SIMULATOR\_VERSION} of seeded runs in both RNG modes, an execution episode and paired runs. A change in behaviour fails until the version is bumped and the new fingerprint recorded.
+\item[\code{test\_layout.py}] The library never imports a paper, and papers never import each other.
+\item[\code{test\_runner.py}] Job order, the result log surviving a job killed mid-write, manifests, refusal to resume across simulator versions, and the commit recorded for a cluster without \code{.git}.
+\item[\code{test\_ghost.py}] One test per matching rule R1--R5, on hand-built books: lapsing at the limit, walking further, the split of an order's traded and rested parts, the post-only clamp, the window drop, cancels and evictions of counterparts, orphans with and without expiry, shadow budgets and conservation; the book-level \code{ioc}; and full book, reservation and conservation invariants in the copy with a trading executor.
+\item[\code{test\_counterfactual.py}] With no executor every configuration equals Arm~0 tick for tick in both RNG modes; Arm~0 inside a paired run equals the same seed with no executor at all; Arm~4 equals a plain single-world run exactly; exact nulls (detection with no detecting maker, inventory with no inventory pricing, predation with no trading, and an instant fill costing the same in all 16 worlds); hiding changes no decision of the executor; each switch does what it says; every baseline and the learned policy complete in the ghost and the full market.
+\item[\code{test\_decomposition.py} (\code{papers/decomposition/tests/})] Shapley values on known games and against the average over all orderings; the accounting identity on results with known values and on the simulator; ladder order dependence; controls; exponents and reversion recovered per arm; executor routes; two-sided p-values, the joint ratio bootstrap and the variance-reduction diagnostics; the protocol and replication summaries; parallel and serial runs identical.
+\item[\code{test\_detection\_curve.py} (\code{papers/decomposition/tests/})] The dialled TWAP's endpoints are exactly \code{twap\_market} and \code{twap\_passive}; timing jitter keeps the schedule on pace; firing, latency, duty and signal are scored by direction; the curve end to end with the rule-based and learned detectors.
 \end{description}
 
 %==================================================================================================
@@ -1506,7 +1704,7 @@ Running \code{python -m pytest} executes $134$ unit and integration tests in $\s
 \begin{lstlisting}
 # --- Environment & Test Suite ---
 uv pip install -e .                                # install package + numpy, matplotlib, gymnasium, torch, wandb
-.venv/bin/python -m pytest                         # 134 tests in ~8s
+.venv/bin/python -m pytest                         # 292 tests in ~45s
 
 # --- Phase 1: Simulator Validation & Square-Root Impact ---
 .venv/bin/python -m scripts.benchmark              # speed benchmark (~15,000 steps/s) + cProfile
@@ -1518,22 +1716,27 @@ uv pip install -e .                                # install package + numpy, ma
 # --- Phase 2: Calibration, Detector Training, Detectability & Leakage ---
 .venv/bin/python -m scripts.calibrate              # fit A0 parameters -> outputs/calibration.json
 .venv/bin/python -m scripts.train_detector         # train A3 classifier -> outputs/detectors/learned.npz
-.venv/bin/python -m scripts.e2_detectability --workers 8
-.venv/bin/python -m scripts.e3_leakage --workers 8 --paths
-.venv/bin/python -m scripts.e7_regimes --workers 8
-.venv/bin/python -m scripts.e7_strength --workers 8
+.venv/bin/python -m papers.stealth_execution.scripts.e2_detectability --workers 8
+.venv/bin/python -m papers.stealth_execution.scripts.e3_leakage --workers 8 --paths
+.venv/bin/python -m papers.stealth_execution.scripts.e7_regimes --workers 8
+.venv/bin/python -m papers.stealth_execution.scripts.e7_strength --workers 8
 
 # --- Phase 3: RL Executor Training, Hyperparameter Sweep & Counterfactual Eval ---
-caffeinate -i .venv/bin/python -u -m scripts.train_rl \
+caffeinate -i .venv/bin/python -u -m papers.stealth_execution.scripts.train_rl \
   --iterations 400 --episodes 32 --epochs 4 --lr 1e-3 --entropy 0.003 --size 0.20 \
   --eval-every 25 --eval-seeds 40 --wandb --out rl/best_sz020
 
-caffeinate -i .venv/bin/python -u -m scripts.sweep_rl \
+caffeinate -i .venv/bin/python -u -m papers.stealth_execution.scripts.sweep_rl \
   --workers 6 --wandb --sync-existing --wandb-project stealth-execution
 
 # Score a trained RL checkpoint against baselines via the E7b leakage counterfactual:
-.venv/bin/python -m scripts.e7_strength --workers 8 \
-  --strategies rl@outputs/rl/sweep/lr1e-3_ent0.003_ep4_sz0.20/policy.pt twap_market twap_passive
+.venv/bin/python -m papers.stealth_execution.scripts.e7_strength --workers 8 \
+  --strategies rl@outputs/stealth_execution/rl/sweep/lr1e-3_ent0.003_ep4_sz0.20/policy.pt twap_market twap_passive
+
+# --- The decomposition study: see papers/decomposition/README.md; the full run goes through hpc/README.md ---
+.venv/bin/python -m papers.decomposition.scripts.decompose --quick
+.venv/bin/python -m papers.decomposition.scripts.make_tables
+cd papers/decomposition/paper && latexmk -pdf notes.tex
 
 # Rebuild this PDF manual:
 cd docs && latexmk -pdf simulator.tex

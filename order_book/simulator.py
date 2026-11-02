@@ -11,6 +11,7 @@ from order_book.book import OrderBook
 from order_book.config import SimConfig
 from order_book.detectors import Detector, FlowDetector
 from order_book.market import Market
+from order_book.rng import SCHEDULE, KeyedStream, keyed
 
 
 class Simulator:
@@ -23,6 +24,9 @@ class Simulator:
     gives external participants (executors, adversaries) their own child
     without disturbing the background streams, which is what makes
     visible/invisible counterfactuals paired (common random numbers).
+    With ``SimConfig(rng="counter")`` the streams are ``KeyedStream``s instead:
+    each draw is a function of (seed, stream label, step, purpose, index), so
+    pairing also survives an intervention that changes how often an agent draws.
 
     Client ids: market makers first, then the noise pool, the institutional
     traders, the speculators and finally the order anticipators (last, so
@@ -37,15 +41,17 @@ class Simulator:
 
     def __init__(self, seed: int = 0, config: SimConfig | None = None, analysis: bool = True):
         self.config = cfg = config or SimConfig()
+        if cfg.rng not in ("stateful", "counter"):
+            raise ValueError(f"SimConfig.rng must be 'stateful' or 'counter'; got {cfg.rng!r}")
         self.analysis = analysis
         self.seed = seed
         self._seed_seq = np.random.SeedSequence(seed)
-        self.streams: list[np.random.Generator] = []
-        self.rng = self.new_stream()  # scheduler: the order agents act in each step
+        self.streams: list = []
+        self.rng = self.new_stream("scheduler")  # the order agents act in each step
         mid = cfg.book.mid
         self.book = OrderBook(cfg.book.num_levels, mid, cfg.book.distance_from_mid, keep_trades=analysis)
         self.market = Market(self.book, analysis, cfg.public)
-        self.fundamental = FundamentalValue(self.new_stream(), mid, cfg.fundamental, record=analysis)
+        self.fundamental = FundamentalValue(self.new_stream("value"), mid, cfg.fundamental, record=analysis)
         self.detectors: dict[str, Detector] = {"flow": FlowDetector(cfg.flow_detector)}
         self.metaorders = MetaorderLog(keep=analysis)
         self.groups: dict[str, list[int]] = {}
@@ -55,9 +61,17 @@ class Simulator:
         self.initial_cash = sum(a.cash for a in self.market.accounts.values())
         self.initial_shares = sum(a.shares for a in self.market.accounts.values())
 
-    def new_stream(self) -> np.random.Generator:
-        """Spawn the next child generator of the root seed; ``reseed`` covers it too."""
-        stream = np.random.default_rng(self._seed_seq.spawn(1)[0])
+    def new_stream(self, label: str | None = None):
+        """The next agent's randomness; ``reseed`` covers it too.
+
+        Stateful mode spawns the next child generator of the root seed, so a
+        stream depends on its position. Counter mode keys it by ``label``, so
+        it depends only on who it belongs to (default: its position).
+        """
+        if self.config.rng == "counter":
+            stream = KeyedStream(self.seed, label or f"stream{len(self.streams)}")
+        else:
+            stream = np.random.default_rng(self._seed_seq.spawn(1)[0])
         self.streams.append(stream)
         return stream
 
@@ -73,26 +87,27 @@ class Simulator:
         pop, shares = cfg.population, cfg.endowment
         cid = 0
         for i, mm_cfg in enumerate(pop.market_makers):
-            self.agents.append(MarketMaker(cid, market, self.new_stream(), shares.maker * mid, shares.maker,
+            self.agents.append(MarketMaker(cid, market, self.new_stream(f"MM{i + 1}"), shares.maker * mid, shares.maker,
                                            cfg=mm_cfg, detector=self._detector(mm_cfg.detector)))
             self.groups[f"MM{i + 1}"] = [cid]
             cid += 1
-        self.agents.append(NoiseFlow(cid, market, self.new_stream(), shares.noise * mid, shares.noise,
+        self.agents.append(NoiseFlow(cid, market, self.new_stream("Noise"), shares.noise * mid, shares.noise,
                                      cfg=cfg.noise))
         self.groups["Noise"] = [cid]
         cid += 1
         for i in range(pop.institutions):
-            self.agents.append(InstitutionalTrader(cid, market, self.new_stream(), shares.institution * mid,
-                                                   shares.institution, cfg=cfg.institution, log=self.metaorders))
+            self.agents.append(InstitutionalTrader(cid, market, self.new_stream(f"Inst{i + 1}"),
+                                                   shares.institution * mid, shares.institution,
+                                                   cfg=cfg.institution, log=self.metaorders))
             self.groups[f"Inst{i + 1}"] = [cid]
             cid += 1
-        self.speculators = Speculators(cid, market, self.new_stream(), self.fundamental, pop.speculators,
+        self.speculators = Speculators(cid, market, self.new_stream("Speculators"), self.fundamental, pop.speculators,
                                        shares.speculator * mid, shares.speculator, cfg=cfg.speculators)
         self.agents.append(self.speculators)
         self.groups["Speculators"] = self.speculators.cids
         cid += pop.speculators
         for i in range(pop.anticipators):
-            self.agents.append(OrderAnticipator(cid, market, self.new_stream(), shares.anticipator * mid,
+            self.agents.append(OrderAnticipator(cid, market, self.new_stream(f"Antic{i + 1}"), shares.anticipator * mid,
                                                 shares.anticipator, cfg=cfg.anticipator,
                                                 detector=self._detector(cfg.anticipator.detector)))
             self.groups[f"Antic{i + 1}"] = [cid]
@@ -104,6 +119,10 @@ class Simulator:
     def step_count(self) -> int:
         return self.market.step
 
+    def schedule(self):
+        """The order the background agents act in this step."""
+        return keyed(self.rng, self.market.step, SCHEDULE).permutation(len(self.agents))
+
     def step(self) -> None:
         """Advance one step: hidden value, external agents in fixed order, background agents in random
         order, publish state, run detectors."""
@@ -111,7 +130,7 @@ class Simulator:
         for agent in self.externals:
             agent.act()
         agents = self.agents
-        for i in self.rng.permutation(len(agents)):
+        for i in self.schedule():
             agents[i].act()
         self.market.end_step()
         public = self.market.public
@@ -144,7 +163,7 @@ class Simulator:
         has). Paired counterfactuals need only this and ``new_stream``.
         """
         cid = max(self.market.accounts) + 1
-        agent = agent_cls(cid, self.market, self.new_stream(), cash, shares, **kwargs)
+        agent = agent_cls(cid, self.market, self.new_stream(f"Ext{len(self.externals) + 1}"), cash, shares, **kwargs)
         self.initial_cash += cash
         self.initial_shares += shares
         self.externals.append(agent)
@@ -156,7 +175,10 @@ class Simulator:
         self.seed = seed
         self._seed_seq = np.random.SeedSequence(seed)
         for stream, child in zip(self.streams, self._seed_seq.spawn(len(self.streams))):
-            stream.bit_generator.state = np.random.default_rng(child).bit_generator.state
+            if isinstance(stream, KeyedStream):
+                stream.reseed(seed)
+            else:
+                stream.bit_generator.state = np.random.default_rng(child).bit_generator.state
 
     # ----- snapshots ------------------------------------------------------- #
 

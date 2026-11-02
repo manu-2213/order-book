@@ -2,6 +2,9 @@
 
 from order_book.agents.base import Agent
 from order_book.config import NoiseFlowConfig
+from order_book.rng import (
+    NOISE_ARRIVALS, NOISE_CANCEL_COUNT, NOISE_CANCEL_PICK, NOISE_KIND, NOISE_OFFSET, NOISE_SIDE, NOISE_SIZE,
+)
 
 
 class NoiseFlow(Agent):
@@ -23,22 +26,23 @@ class NoiseFlow(Agent):
         self.p_geometric = 1 / (self.cfg.mean_offset + 1)
 
     def act(self) -> None:
-        m, rng, book, cid, cfg = self.market, self.rng, self.market.book, self.cid, self.cfg
+        m, book, cid, cfg = self.market, self.market.book, self.cid, self.cfg
         ids = book.client_order_ids(cid)
         if ids:
-            k = rng.binomial(len(ids), cfg.cancel_prob)
+            k = self.draws(NOISE_CANCEL_COUNT).binomial(len(ids), cfg.cancel_prob)
             if k:
-                for order_id in rng.choice(list(ids), k, replace=False):
+                for order_id in self.draws(NOISE_CANCEL_PICK).choice(list(ids), k, replace=False):
                     m.cancel(cid, int(order_id))
-        n = rng.poisson(cfg.rate * m.public.attention)
+        n = self.draws(NOISE_ARRIVALS).poisson(cfg.rate * m.public.attention)
         if not n:
             return
         account, mid = self.account, m.public.mid
         cash_share = account.cash / (account.cash + account.shares * mid)
-        bids = rng.random(n) < 0.5 + cfg.balance_weight * (cash_share - 0.5)
-        sizes = rng.integers(1, cfg.max_qty + 1, n)
-        kinds = rng.random(n)
-        offsets = rng.geometric(self.p_geometric, n)
+        # One address per attribute: each array is stable in its prefix, so a different n only changes the tail.
+        bids = self.draws(NOISE_SIDE).random(n) < 0.5 + cfg.balance_weight * (cash_share - 0.5)
+        sizes = self.draws(NOISE_SIZE).integers(1, cfg.max_qty + 1, n)
+        kinds = self.draws(NOISE_KIND).random(n)
+        offsets = self.draws(NOISE_OFFSET).geometric(self.p_geometric, n)
         cross = cfg.market_frac + cfg.cross_frac
         for i in range(n):
             side = "bid" if bids[i] else "ask"

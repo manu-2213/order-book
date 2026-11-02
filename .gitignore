@@ -8,3 +8,12 @@ outputs/
 *.pkl
 .DS_Store
 wandb
+.source_version
+logs/
+*.aux
+*.fls
+*.fdb_latexmk
+*.out
+*.toc
+*.synctex.gz
+papers

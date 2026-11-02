@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from order_book.agents.base import Agent
 from order_book.config import InstitutionalConfig
+from order_book.rng import INST_JITTER, INST_START
 
 
 @dataclass
@@ -91,16 +92,17 @@ class InstitutionalTrader(Agent):
         m, ps = self.market, self.market.public
         self.cum_volume += ps.step_volume
         if self.record is None:
-            if self.rng.random() < self.cfg.start_rate:
-                self._start()
+            draws = self.draws(INST_START)
+            if draws.random() < self.cfg.start_rate:
+                self._start(draws)
             return
         if m.step >= self.record.planned_end or self._remaining() <= 0:
             self._finish()
             return
         getattr(self, "_" + self.record.style)()
 
-    def _start(self) -> None:
-        rng, cfg, account = self.rng, self.cfg, self.account
+    def _start(self, rng=None) -> None:
+        rng, cfg, account = rng if rng is not None else self.draws(INST_START), self.cfg, self.account
         inventory = (account.shares - self.endowment) / max(self.endowment, 1)
         side = "bid" if rng.random() < 0.5 - 0.5 * math.tanh(cfg.inventory_pull * inventory) else "ask"
         size = int(min(cfg.size_max, round(cfg.size_median * math.exp(cfg.size_sigma * rng.standard_normal()))))
@@ -174,10 +176,10 @@ class InstitutionalTrader(Agent):
     def _twap_random(self) -> None:
         if self.market.step < self.next_step:
             return
-        j = self.cfg.jitter
-        child = math.ceil(self._remaining() / self._slices_left() * self.rng.uniform(1 - j, 1 + j))
+        j, draws = self.cfg.jitter, self.draws(INST_JITTER)
+        child = math.ceil(self._remaining() / self._slices_left() * draws.uniform(1 - j, 1 + j))
         self._send(child)
-        self.next_step = self.market.step + max(1, round(self.cfg.interval * self.rng.uniform(1 - j, 1 + j)))
+        self.next_step = self.market.step + max(1, round(self.cfg.interval * draws.uniform(1 - j, 1 + j)))
 
     def _twap_passive(self) -> None:
         """Post each slice at own best; at the slice deadline cross the spread for what did not fill."""

@@ -23,8 +23,10 @@ def main():
     parser.add_argument("--after", type=int, default=500)
     parser.add_argument("--fractions", type=float, nargs="+", default=(0.05, 0.1, 0.2))
     parser.add_argument("--quick", action="store_true", help="2 seeds, horizon 500: smoke test only")
-    parser.add_argument("--out", default=str(CALIBRATION_PATH))
+    parser.add_argument("--out", default=None)
     args = parser.parse_args()
+    if args.out is None:  # a smoke test never overwrites the real one
+        args.out = str(CALIBRATION_PATH.with_name("calibration_quick.json") if args.quick else CALIBRATION_PATH)
     if args.quick:
         args.seeds, args.horizon, args.burn_in, args.after = 2, 500, 1_000, 200
     cal = calibrate(range(args.seeds), tuple(args.fractions), args.horizon, args.burn_in, args.after)

@@ -13,8 +13,8 @@ dependencies = ["numpy", "matplotlib", "gymnasium", "torch", "wandb"]
 dev = ["pytest", "ipykernel", "imageio-ffmpeg"]
 
 [tool.setuptools.packages.find]
-include = ["order_book*", "scripts*"]
+include = ["order_book*", "scripts*", "papers*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "papers"]
 pythonpath = ["."]

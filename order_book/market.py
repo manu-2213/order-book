@@ -38,7 +38,13 @@ class Market:
     In analysis mode every fill is appended to ``tape`` as
     (step, price, quantity, aggressor_side, buyer_id, seller_id); in training
     mode only the rolling aggregates in ``public`` are kept.
+
+    ``mirror``, when set, is told about every order and cancel that reached
+    the book (``on_order(report)``, ``on_cancel(cid, order_id)``); the ghost
+    arm replays Arm 0's order flow through it (``order_book.ghost``).
     """
+
+    mirror = None
 
     def __init__(self, book: OrderBook, analysis: bool = True, public: PublicStateConfig | None = None):
         self.book = book
@@ -141,7 +147,10 @@ class Market:
         if quantity < 1:
             self.budget_rejects[side] += 1
             return None
-        return self._settle(self.book.limit(side, cid, price, quantity))
+        report = self._settle(self.book.limit(side, cid, price, quantity))
+        if self.mirror is not None:
+            self.mirror.on_order(report)
+        return report
 
     def ioc(self, cid: int, side: Side, price: int, quantity: int) -> Report | None:
         """Immediate-or-cancel: trade up to ``price`` now, cancel whatever would rest."""
@@ -166,7 +175,10 @@ class Market:
         if quantity < 1:
             self.budget_rejects[side] += 1
             return None
-        return self._settle(self.book.market(side, cid, quantity))
+        report = self._settle(self.book.market(side, cid, quantity))
+        if self.mirror is not None:
+            self.mirror.on_order(report)
+        return report
 
     def cancel(self, cid: int, order_id: int) -> None:
         report = self.book.cancel_order(order_id, cid)
@@ -175,6 +187,8 @@ class Market:
             account.reserved_cash -= report["price"] * report["cancelled_quantity"]
         else:
             account.reserved_shares -= report["cancelled_quantity"]
+        if self.mirror is not None:
+            self.mirror.on_cancel(cid, order_id)
 
     def cancel_all(self, cid: int) -> None:
         for order_id in list(self.book.client_order_ids(cid)):
@@ -187,7 +201,9 @@ class Market:
         public volume totals; only the signed flow window and the anonymous
         per-step trade list omit them. This deliberately breaks the
         no-identity rule and exists only for the analysis-mode counterfactual
-        that separates impact cost from leakage cost.
+        that separates impact cost from leakage cost. The complete flow stays
+        available as ``public.imbalance_all``: the executor itself reads that,
+        so hiding it changes what detectors see and not what it decides on.
         """
         self.hidden_aggressors.add(cid)
 

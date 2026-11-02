@@ -173,6 +173,7 @@ class EndowmentConfig:
 @dataclass(frozen=True)
 class SimConfig:
     step_seconds: float = 1.0     # wall-clock meaning of one step; all rates are per step
+    rng: str = "stateful"         # "stateful": one sequential stream per agent; "counter": see ``order_book.rng``
     book: BookConfig = field(default_factory=BookConfig)
     public: PublicStateConfig = field(default_factory=PublicStateConfig)
     flow_detector: FlowDetectorConfig = field(default_factory=FlowDetectorConfig)

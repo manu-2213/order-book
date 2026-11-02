@@ -190,6 +190,9 @@ class OrderBook:
             raise ValueError("side must be 'bid' or 'ask'.")
         return self._volumes[side].get(self._integer(price, "price", 1), 0)
 
+    def is_active(self, order_id: int) -> bool:
+        return order_id in self._orders
+
     def get_order(self, order_id: int) -> OrderView | None:
         order = self._orders.get(self._integer(order_id, "order_id"))
         return order.view() if order else None
@@ -299,11 +302,11 @@ class OrderBook:
         return trades, stp_cancelled, cancelled, self._refresh(opposite)
 
     def _submit(self, side: Side, client_id, quantity, price, stp_mode,
-                replacement: _Order | None = None) -> Report:
+                replacement: _Order | None = None, rest: bool = True) -> Report:
         client_id = self._integer(client_id, "client_id")
         quantity = self._integer(quantity, "quantity", 1)
         if price is not None:
-            price = self._validate_price(side, price)
+            price = self._validate_price(side, price) if rest else self._integer(price, "price", 1)
         mode = self.self_trade_prevention if stp_mode is None else stp_mode
         self._check_mode(mode)
         if replacement is not None:  # validated above, so the swap is atomic
@@ -311,7 +314,7 @@ class OrderBook:
         order = _Order(self.order_id, client_id, side, price or 0, quantity)
         self.order_id += 1
         trades, stp_cancelled, cancelled, evicted = self._match(order, price, mode)
-        if price is None:
+        if price is None or not rest:
             cancelled += order.quantity
             order.quantity = 0
         elif order.quantity:
@@ -320,7 +323,7 @@ class OrderBook:
         filled = quantity - order.quantity - cancelled
         report: Report = {
             "order_id": order.order_id, "client_id": client_id, "side": side,
-            "order_type": "market" if price is None else "limit", "price": price,
+            "order_type": "market" if price is None else ("limit" if rest else "ioc"), "price": price,
             "requested_quantity": quantity, "filled_quantity": filled,
             "resting_quantity": order.quantity, "cancelled_quantity": cancelled,
             "avg_fill_price": (sum(t["price"] * t["quantity"] for t in trades) / filled
@@ -347,6 +350,12 @@ class OrderBook:
         if side not in self._queues:
             raise ValueError("side must be 'bid' or 'ask'.")
         return self._submit(side, client_id, quantity, None, stp_mode)
+
+    def ioc(self, side: Side, client_id: int, price: int, quantity: int, stp_mode: str | None = None) -> Report:
+        """Match up to ``price`` now and cancel the remainder; it never rests, so the window does not apply."""
+        if side not in self._queues:
+            raise ValueError("side must be 'bid' or 'ask'.")
+        return self._submit(side, client_id, quantity, price, stp_mode, rest=False)
 
     def buy(self, client_id: int, quantity: int = 1, stp_mode: str | None = None) -> Report:
         return self.market("bid", client_id, quantity, stp_mode)

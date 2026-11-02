@@ -330,6 +330,15 @@ values, so the ratios above would be nonsense. \code{warmed\_up} turns \code{Tru
 $n\cdot\alpha_{\text{slow}}>1$, i.e.\ after roughly one slow span of data. Until then, \code{attention}
 stays at $1$.
 
+\begin{whyuse}
+\code{warmed\_up} is also a signal for \emph{other} code. The institutional trader
+(\code{order\_book/agents/institutional.py}) reads it: once the flag is \code{True} it plans how long
+a metaorder should last (order size divided by participation times volume) from \code{volume\_slow}, and before that it uses the constant \code{volume\_fallback} from its
+config, because early on \code{volume\_slow} is still close to its starting value of $0$ and would give
+a misleading estimate. Inside \code{PublicState} itself the flag is not consulted: the attention
+calculation is guarded by the same $n\cdot\alpha_{\text{slow}}>1$ test that sets the flag.
+\end{whyuse}
+
 %==================================================================================================
 \section{Bookkeeping}
 

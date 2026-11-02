@@ -13,9 +13,15 @@
     order_book.impact        paired impact measurement with injected metaorders
     order_book.execution     execution task, executor agent, baseline strategies, calibration
     order_book.scoring       detector scoring (AUC, delay, false alarms) and the statistical protocol
-    order_book.experiments   adversary levels, episode specs, E2/E3 definitions and runner
+    order_book.experiments   adversary levels, episode specs, market regimes and the episode runner
+    order_book.runner        the process pool and the resumable result log
+    order_book.provenance    SIMULATOR_VERSION and the manifest written next to every result
+    order_book.rng           counter-based draws addressed by (seed, agent, step, purpose)
+    order_book.ghost         a live copy of a book replaying its order flow (the ghost arm)
+    order_book.counterfactual  Arm 0 and a treated world in lockstep, with four reaction channels
     order_book.env           Gymnasium wrapper (imports gymnasium; not re-exported here)
 
+The studies built on this library live in papers/, one folder per paper (papers/README.md).
 Full documentation with every equation and default: docs/simulator.tex (docs/simulator.pdf).
 """
 

@@ -12,6 +12,7 @@ import math
 from dataclasses import dataclass, field
 
 from order_book.agents.base import Agent
+from order_book.rng import EXEC_DECIDE, EXEC_RESET
 
 
 @dataclass(frozen=True)
@@ -169,7 +170,7 @@ class ExecutorAgent(Agent):
         decisions_left = max(1, math.ceil((task.horizon - elapsed) / task.decision_interval))
         resting = m.book.get_client_orders(self.cid)
         window = ps.flow_window
-        window_flow = ps.buy_flow + ps.sell_flow
+        window_flow = ps.buy_flow_all + ps.sell_flow_all  # the true tape: hiding from detectors changes no decision
         own_window = sum(self._own_window[-window:])
         executed = self._executed()
         return ExecState(
@@ -177,7 +178,7 @@ class ExecutorAgent(Agent):
             decisions_left=decisions_left, side=task.side, quantity=self.quantity,
             remaining=self.quantity - executed, executed=executed, aggressive_executed=self.own_aggressive,
             arrival_mid=self.result.arrival_mid, mid=ps.mid, best_bid=ps.best_bid, best_ask=ps.best_ask,
-            spread=ps.spread, imbalance=ps.imbalance, public_volume_since_start=self.public_volume_since_start,
+            spread=ps.spread, imbalance=ps.imbalance_all, public_volume_since_start=self.public_volume_since_start,
             own_resting=sum(o["quantity"] for o in resting), own_resting_orders=resting,
             expected_volume_per_step=self.expected_volume,
             own_flow_share=min(1.0, own_window / window_flow) if window_flow else 0.0, public=ps,
@@ -195,7 +196,7 @@ class ExecutorAgent(Agent):
             self._seen_shares = self._seen_notional = 0
             self.result = ExecutionResult(task.side, self.quantity, ps.mid, m.step)
             self._own_window.append(0)
-            self.strategy.reset(self.state(), self.rng)
+            self.strategy.reset(self.state(), self.draws(EXEC_RESET))
         else:
             self.public_volume_since_start += ps.step_volume
             self._own_window.append(0)
@@ -206,7 +207,7 @@ class ExecutorAgent(Agent):
         elif self._executed() >= self.quantity:
             self._finish()
         elif elapsed % task.decision_interval == 0:
-            self._apply(self.strategy.decide(self.state(), self.rng))
+            self._apply(self.strategy.decide(self.state(), self.draws(EXEC_DECIDE)))
 
     def _apply(self, d: Decision) -> None:
         m, cid, task = self.market, self.cid, self.task

@@ -3,6 +3,7 @@
 import numpy as np
 
 from order_book.config import FundamentalConfig
+from order_book.rng import VALUE, keyed
 
 
 class FundamentalValue:
@@ -14,6 +15,8 @@ class FundamentalValue:
     instead and this shared path is advanced but unused.
     """
 
+    t = 0  # advances taken; the address of the next draw
+
     def __init__(self, rng: np.random.Generator, initial: float, cfg: FundamentalConfig | None = None,
                  record: bool = True):
         self.cfg = cfg = cfg or FundamentalConfig()
@@ -22,6 +25,8 @@ class FundamentalValue:
         self.history: list[float] | None = [self.value] if record else None
 
     def advance(self) -> None:
-        self.value += self.reversion * (self.anchor - self.value) + self.sigma * self.rng.standard_normal()
+        self.value += (self.reversion * (self.anchor - self.value)
+                       + self.sigma * keyed(self.rng, self.t, VALUE).standard_normal())
+        self.t += 1
         if self.history is not None:
             self.history.append(self.value)

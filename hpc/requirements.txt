@@ -1,0 +1,8 @@
+# Exact versions: NumPy's streams and float results are part of what a run produces, so the cluster should match the
+# versions the simulator's fingerprints were recorded with (tests/test_simulator_version.py).
+numpy==2.4.6
+torch==2.14.1
+gymnasium==1.4.0
+matplotlib==3.11.2
+wandb==0.31.0
+pytest
