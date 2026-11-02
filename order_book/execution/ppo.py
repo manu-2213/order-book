@@ -53,7 +53,7 @@ def _gae(rewards, values, gamma: float, lam: float) -> tuple[np.ndarray, np.ndar
 class PPOTrainer:
     def __init__(self, env: ExecutionEnv | None = None, config: PPOConfig | None = None,
                  net: PolicyNet | None = None, device: str = "cpu"):
-        self.env = env or ExecutionEnv()
+        self.env = env if env is not None else ExecutionEnv()
         self.cfg = config or PPOConfig()
         self.device = device
         self.net = (net or new_policy(device, self.cfg.seed)).to(device)

@@ -23,6 +23,15 @@ from order_book.scoring import bootstrap_ratio, crn_diagnostics, paired_differen
 QUICK = dict(burn_in=400, after=60)
 
 
+def test_the_papers_tables_build_from_the_committed_summaries():
+    from papers.decomposition.scripts import make_paper as paper
+    tails = json.loads((paper.RESULTS / "tails.json").read_text())
+    assert "tab:runaways" in paper.runaways_table(tails)
+    assert "tab:causes" in paper.causes_table(paper.load("runaway_causes")["summary"])
+    assert "tab:twap" in paper.twap_table(paper.load("e8_deep_cover"), paper.load("e8_capital_deep"))
+    assert "tab:horizon" in paper.horizon_table(paper.load("e8_horizons"), paper.load("e8_capital_horizons"), tails["horizons"], tails["horizons_cap"])
+
+
 def test_the_capital_regimes_change_only_what_speculators_and_the_noise_pool_hold():
     plain, rich = RegimeSpec("deep_cover", 1.0, 4).base(), CAPITAL_REGIMES[0].base()
     assert (rich.endowment.speculator, rich.endowment.noise) == (10 * plain.endowment.speculator, 10 * plain.endowment.noise)

@@ -56,10 +56,27 @@ def command(job: Path) -> str:
 
 
 def test_the_grids_are_split_into_arrays():
-    assert {job.stem for job in ARRAYS} >= {"e8_deep_cover", "e8_low_cover", "e8_horizons", "protocol", "detection_curve", "replications"}
+    assert {job.stem for job in GRIDS} >= {"e8_deep_cover", "e8_low_cover", "e8_horizons", "protocol", "detection_curve", "replications", "e8_rl"}
+    assert {job.stem for job in SWEEPS} == {"train_rl"}
 
 
-@pytest.mark.parametrize("job", ARRAYS, ids=lambda p: p.stem)
+def test_submit_chains_a_job_on_itself_when_asked():
+    text = (ROOT / "hpc/submit.sh").read_text()
+    assert "CHAIN" in text and "--dependency=afterany" in text
+
+
+GRIDS = [job for job in ARRAYS if "--shard" in command(job)]
+SWEEPS = [job for job in ARRAYS if "--shard" not in command(job)]
+
+
+@pytest.mark.parametrize("job", SWEEPS, ids=lambda p: p.stem)
+def test_a_sweep_array_runs_one_setting_per_task_and_survives_the_hour(job):
+    text = command(job)
+    assert "--sweep $SLURM_ARRAY_TASK_ID" in text
+    assert "--resume" in text and re.search(r"--hours 0\.[0-9]+", text), "a training task must checkpoint before the walltime so the chain can resume it"
+
+
+@pytest.mark.parametrize("job", GRIDS, ids=lambda p: p.stem)
 def test_an_array_has_one_task_per_seed_and_a_merge_with_the_same_grid(job):
     text = job.read_text()
     seeds = int(re.search(r"--seeds (\d+)", command(job)).group(1))
@@ -73,5 +90,5 @@ def test_an_array_has_one_task_per_seed_and_a_merge_with_the_same_grid(job):
 
 def test_submit_all_only_names_jobs_that_exist():
     text = (ROOT / "papers/decomposition/slurm/submit_all.sh").read_text()
-    named = {name for group in re.findall(r"^(?:main|extras|capital)=\((.*)\)$", text, re.M) for name in group.split()}
-    assert named == {job.stem for job in ARRAYS}
+    named = {name for group in re.findall(r"^\w+=\((.*)\)$", text, re.M) for name in group.split()}
+    assert named == {job.stem for job in ARRAYS} | {"rl_eval"}

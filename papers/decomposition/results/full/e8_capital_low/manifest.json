@@ -1,0 +1,92 @@
+[
+ {
+  "simulator_version": "1",
+  "commit": "ffe8688712080aee7381d337421776fda468224d",
+  "dirty": false,
+  "origin": ".source_version",
+  "resumed": false,
+  "argv": [
+   "/data/home/acw796/order-book/papers/decomposition/scripts/decompose.py",
+   "--out",
+   "e8_capital_low",
+   "--regime",
+   "low_cover_capital10",
+   "--first-seed",
+   "1020",
+   "--seeds",
+   "20",
+   "--merge",
+   "--workers",
+   "8"
+  ],
+  "time_utc": "2026-11-02T18:36:29+00:00",
+  "host": "ddy184",
+  "slurm_job_id": "35102772",
+  "python": "3.11.7",
+  "numpy": "2.4.6",
+  "config": {
+   "name": "E8",
+   "strategies": [
+    "immediate",
+    "twap_market",
+    "twap_passive",
+    "twap_random",
+    "pov",
+    "almgren_chriss_1e-07",
+    "almgren_chriss_1e-06",
+    "almgren_chriss_1e-05",
+    "obizhaeva_wang",
+    "limit_market",
+    "footprint",
+    "mimic"
+   ],
+   "sizes": [
+    0.02,
+    0.05,
+    0.1,
+    0.2,
+    0.4
+   ],
+   "horizons": [
+    2000
+   ],
+   "seeds": [
+    1020,
+    1021,
+    1022,
+    1023,
+    1024,
+    1025,
+    1026,
+    1027,
+    1028,
+    1029,
+    1030,
+    1031,
+    1032,
+    1033,
+    1034,
+    1035,
+    1036,
+    1037,
+    1038,
+    1039
+   ],
+   "regime": {
+    "name": "low_cover_capital10",
+    "liquidity": 1.0,
+    "institutions": 1,
+    "makers": 4,
+    "mm_size_scale": 1.0,
+    "capital": 10
+   },
+   "threshold": "medium",
+   "mode": "shapley",
+   "controls": true,
+   "decision_interval": 5,
+   "burn_in": 2000,
+   "after": 500,
+   "rng": "counter"
+  }
+ }
+]

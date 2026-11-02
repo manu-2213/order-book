@@ -26,7 +26,7 @@ ACTIONS: tuple[tuple[float, str], ...] = tuple(
     (mult, place) for mult in SIZE_MULTS for place in PLACEMENTS
 )
 N_ACTIONS = len(ACTIONS)
-N_FEATURES = 13
+N_FEATURES = 14  # append new features at the end: a saved net reads the prefix it was trained on
 MAX_BPS = 20.0  # scale for the running paper-loss feature
 
 
@@ -53,6 +53,7 @@ def features(s: ExecState) -> np.ndarray:
         min(s.own_resting / s.quantity, 2.0) if s.quantity else 0.0,
         min(vol / 2.0, 3.0),
         np.clip(s.public.attention - 1.0, -1.0, 2.0),
+        min(s.quantity / max(s.expected_volume_per_step * s.horizon, 1.0), 1.0),  # nominal participation: the order's size for this market
     ], dtype=np.float32)
     return vec
 

@@ -76,7 +76,7 @@ class PolicyStrategy(Strategy):
         pass
 
     def decide(self, s: ExecState, rng) -> Decision:
-        obs = features(s)
+        obs = features(s)[: self.net.n_features]  # a net trained before a feature was appended still sees what it knows
         t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         with torch.no_grad():
             logits, value = self.net(t)

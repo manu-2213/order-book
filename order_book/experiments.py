@@ -243,3 +243,7 @@ DEFAULT_REGIMES = (
     RegimeSpec("no_cover", 1.0, 0),              # deep book, no institutions
     RegimeSpec("thin_no_cover", 0.4, 0, mm_size_scale=0.5),  # thin book, no cover: the executor dominates
 )
+
+# Ten times the capital for speculators and the noise pool. Long metaorders exhaust the default market's capital and the
+# price runs away; these are the robustness market of the decomposition and the market the executor is trained in.
+CAPITAL_REGIMES = (RegimeSpec("deep_cover_capital10", 1.0, 4, capital=10), RegimeSpec("low_cover_capital10", 1.0, 1, capital=10))

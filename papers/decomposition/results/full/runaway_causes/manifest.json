@@ -1,0 +1,88 @@
+[
+ {
+  "simulator_version": "1",
+  "commit": "ffe8688712080aee7381d337421776fda468224d",
+  "dirty": true,
+  "origin": "git",
+  "resumed": false,
+  "argv": [
+   "/Users/manu13/Desktop/PHD/order-book/papers/decomposition/scripts/runaway_causes.py",
+   "--workers",
+   "7"
+  ],
+  "time_utc": "2026-11-02T18:45:09+00:00",
+  "host": "Manuels-MacBook-Air.local",
+  "slurm_job_id": null,
+  "python": "3.11.7",
+  "numpy": "2.4.6",
+  "config": {
+   "cells": [
+    [
+     "immediate",
+     0.2,
+     2000
+    ],
+    [
+     "immediate",
+     0.4,
+     2000
+    ],
+    [
+     "limit_market",
+     0.4,
+     2000
+    ],
+    [
+     "pov",
+     0.4,
+     2000
+    ],
+    [
+     "twap_market",
+     0.4,
+     2000
+    ],
+    [
+     "twap_market",
+     0.2,
+     8000
+    ],
+    [
+     "twap_market",
+     0.4,
+     8000
+    ],
+    [
+     "pov",
+     0.4,
+     8000
+    ]
+   ],
+   "seeds": [
+    1000,
+    1001,
+    1002,
+    1003,
+    1004,
+    1005,
+    1006,
+    1007,
+    1008,
+    1009,
+    1010,
+    1011,
+    1012,
+    1013,
+    1014,
+    1015,
+    1016,
+    1017,
+    1018,
+    1019
+   ],
+   "regime": "deep_cover",
+   "burn_in": 2000,
+   "after": 500
+  }
+ }
+]

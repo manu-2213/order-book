@@ -1,0 +1,468 @@
+{
+ "summary": {
+  "immediate|0.2|2000": {
+   "baseline": {
+    "mean": 64.17237737922984,
+    "median": 12.292218416437242,
+    "max": 267.5899827287797,
+    "runaways": 4,
+    "largest_peak": 953.0,
+    "episodes": 20
+   },
+   "no_inv_limit": {
+    "mean": 64.16313710126312,
+    "median": 12.292218416437242,
+    "max": 267.4051771694453,
+    "runaways": 4,
+    "largest_peak": 962.0,
+    "episodes": 20
+   },
+   "no_vol_pull": {
+    "mean": 60.99682571892072,
+    "median": 28.08536384499108,
+    "max": 309.3064746466165,
+    "runaways": 6,
+    "largest_peak": 986.0,
+    "episodes": 20
+   },
+   "no_switch": {
+    "mean": 48.35920125719643,
+    "median": 15.841843774359017,
+    "max": 253.94750380885313,
+    "runaways": 2,
+    "largest_peak": 993.0,
+    "episodes": 20
+   },
+   "spec_capacity": {
+    "mean": 65.40404573185609,
+    "median": 12.292218416437242,
+    "max": 275.78691041673517,
+    "runaways": 4,
+    "largest_peak": 1029.0,
+    "episodes": 20
+   },
+   "noise_budget": {
+    "mean": 55.55086828592617,
+    "median": 11.061769636066462,
+    "max": 265.2670283873494,
+    "runaways": 4,
+    "largest_peak": 974.0,
+    "episodes": 20
+   },
+   "all_three": {
+    "mean": 43.34798251005714,
+    "median": 11.331939676858502,
+    "max": 252.65018350787105,
+    "runaways": 1,
+    "largest_peak": 885.5,
+    "episodes": 20
+   }
+  },
+  "immediate|0.4|2000": {
+   "baseline": {
+    "mean": 226.96114265613159,
+    "median": 89.06965827733994,
+    "max": 999.2134455267067,
+    "runaways": 10,
+    "largest_peak": 3250.5,
+    "episodes": 20
+   },
+   "no_inv_limit": {
+    "mean": 225.84458046199603,
+    "median": 89.06965827733994,
+    "max": 983.8532781166814,
+    "runaways": 10,
+    "largest_peak": 3130.0,
+    "episodes": 20
+   },
+   "no_vol_pull": {
+    "mean": 232.051218995655,
+    "median": 140.53300839255147,
+    "max": 1165.7245922901425,
+    "runaways": 11,
+    "largest_peak": 3418.0,
+    "episodes": 20
+   },
+   "no_switch": {
+    "mean": 143.18287151278932,
+    "median": 67.8958106606634,
+    "max": 731.161335597606,
+    "runaways": 7,
+    "largest_peak": 3452.0,
+    "episodes": 20
+   },
+   "spec_capacity": {
+    "mean": 228.11386343633177,
+    "median": 84.49957394300279,
+    "max": 1051.4831760514292,
+    "runaways": 10,
+    "largest_peak": 3650.0,
+    "episodes": 20
+   },
+   "noise_budget": {
+    "mean": 188.405014554846,
+    "median": 91.36970656901974,
+    "max": 784.3408594272096,
+    "runaways": 11,
+    "largest_peak": 2529.0,
+    "episodes": 20
+   },
+   "all_three": {
+    "mean": 107.34895875065745,
+    "median": 28.95025954577986,
+    "max": 708.0573856895543,
+    "runaways": 6,
+    "largest_peak": 2239.0,
+    "episodes": 20
+   }
+  },
+  "limit_market|0.4|2000": {
+   "baseline": {
+    "mean": 103.46065462814938,
+    "median": 24.858820074277947,
+    "max": 1201.2883348669498,
+    "runaways": 3,
+    "largest_peak": 2465.0,
+    "episodes": 20
+   },
+   "no_inv_limit": {
+    "mean": 103.42988840702337,
+    "median": 24.858820074277947,
+    "max": 1199.3986134247432,
+    "runaways": 3,
+    "largest_peak": 2521.0,
+    "episodes": 20
+   },
+   "no_vol_pull": {
+    "mean": 98.94962396513077,
+    "median": 19.403805356430716,
+    "max": 1305.2476564265123,
+    "runaways": 3,
+    "largest_peak": 2629.0,
+    "episodes": 20
+   },
+   "no_switch": {
+    "mean": 49.54708406775546,
+    "median": 17.891638626924074,
+    "max": 517.5220482985308,
+    "runaways": 2,
+    "largest_peak": 1357.0,
+    "episodes": 20
+   },
+   "spec_capacity": {
+    "mean": 104.07175188183336,
+    "median": 28.214113445488383,
+    "max": 1207.5389271664985,
+    "runaways": 3,
+    "largest_peak": 2533.0,
+    "episodes": 20
+   },
+   "noise_budget": {
+    "mean": 76.66042848482775,
+    "median": 17.781719141730537,
+    "max": 783.4902995587788,
+    "runaways": 3,
+    "largest_peak": 1777.0,
+    "episodes": 20
+   },
+   "all_three": {
+    "mean": 33.811549834468224,
+    "median": 9.409331632047977,
+    "max": 344.31673623878794,
+    "runaways": 1,
+    "largest_peak": 1142.5,
+    "episodes": 20
+   }
+  },
+  "pov|0.4|2000": {
+   "baseline": {
+    "mean": 85.57680599641577,
+    "median": 11.857697361840447,
+    "max": 542.0672691976415,
+    "runaways": 4,
+    "largest_peak": 2321.0,
+    "episodes": 20
+   },
+   "no_inv_limit": {
+    "mean": 91.16605302751302,
+    "median": 11.857697361840447,
+    "max": 596.3395449462957,
+    "runaways": 4,
+    "largest_peak": 2744.0,
+    "episodes": 20
+   },
+   "no_vol_pull": {
+    "mean": 72.95920863694991,
+    "median": 10.705823006314027,
+    "max": 615.5865256666988,
+    "runaways": 3,
+    "largest_peak": 2494.0,
+    "episodes": 20
+   },
+   "no_switch": {
+    "mean": 31.402902174707993,
+    "median": 11.47497306905893,
+    "max": 213.1099214043989,
+    "runaways": 3,
+    "largest_peak": 1610.5,
+    "episodes": 20
+   },
+   "spec_capacity": {
+    "mean": 92.29889512107573,
+    "median": 9.953659789563435,
+    "max": 647.5005061912949,
+    "runaways": 4,
+    "largest_peak": 2308.0,
+    "episodes": 20
+   },
+   "noise_budget": {
+    "mean": 82.77277672139662,
+    "median": 10.094911470491773,
+    "max": 584.4286472169579,
+    "runaways": 4,
+    "largest_peak": 2044.0,
+    "episodes": 20
+   },
+   "all_three": {
+    "mean": 25.515205015639193,
+    "median": 12.788057990209925,
+    "max": 174.51487020032775,
+    "runaways": 2,
+    "largest_peak": 1108.0,
+    "episodes": 20
+   }
+  },
+  "twap_market|0.4|2000": {
+   "baseline": {
+    "mean": 8.395903593292733,
+    "median": 5.004842875954165,
+    "max": 32.227054677873994,
+    "runaways": 1,
+    "largest_peak": 526.5,
+    "episodes": 20
+   },
+   "no_inv_limit": {
+    "mean": 8.395903593292733,
+    "median": 5.004842875954165,
+    "max": 32.227054677873994,
+    "runaways": 1,
+    "largest_peak": 526.5,
+    "episodes": 20
+   },
+   "no_vol_pull": {
+    "mean": 7.776677405158961,
+    "median": 4.993529297474556,
+    "max": 24.98143134875446,
+    "runaways": 0,
+    "largest_peak": 34.0,
+    "episodes": 20
+   },
+   "no_switch": {
+    "mean": 5.4816168894403825,
+    "median": 3.786752641291592,
+    "max": 22.19589207124807,
+    "runaways": 0,
+    "largest_peak": 12.0,
+    "episodes": 20
+   },
+   "spec_capacity": {
+    "mean": 7.881437439817195,
+    "median": 5.040074275006042,
+    "max": 25.725369245418094,
+    "runaways": 0,
+    "largest_peak": 31.5,
+    "episodes": 20
+   },
+   "noise_budget": {
+    "mean": 7.1394203795532105,
+    "median": 4.866363350463556,
+    "max": 23.736756729699202,
+    "runaways": 0,
+    "largest_peak": 29.0,
+    "episodes": 20
+   },
+   "all_three": {
+    "mean": 5.0313925381858065,
+    "median": 3.1593059808260806,
+    "max": 21.349841893467786,
+    "runaways": 0,
+    "largest_peak": 10.0,
+    "episodes": 20
+   }
+  },
+  "twap_market|0.2|8000": {
+   "baseline": {
+    "mean": 23.90562966620498,
+    "median": 8.733487852243403,
+    "max": 229.89532146799516,
+    "runaways": 2,
+    "largest_peak": 3623.5,
+    "episodes": 20
+   },
+   "no_inv_limit": {
+    "mean": 20.251928879522666,
+    "median": 8.733487852243403,
+    "max": 158.50195069298744,
+    "runaways": 2,
+    "largest_peak": 3249.0,
+    "episodes": 20
+   },
+   "no_vol_pull": {
+    "mean": 11.190496819076785,
+    "median": 8.588562899181387,
+    "max": 51.21135022319066,
+    "runaways": 2,
+    "largest_peak": 1674.0,
+    "episodes": 20
+   },
+   "no_switch": {
+    "mean": 11.714349840772133,
+    "median": 6.116111188655617,
+    "max": 123.80917874059767,
+    "runaways": 2,
+    "largest_peak": 6823.5,
+    "episodes": 20
+   },
+   "spec_capacity": {
+    "mean": 8.524859838662145,
+    "median": 6.733900921279502,
+    "max": 37.83555625283759,
+    "runaways": 0,
+    "largest_peak": 288.0,
+    "episodes": 20
+   },
+   "noise_budget": {
+    "mean": 8.259244622353778,
+    "median": 6.6871122001416285,
+    "max": 42.45785895153207,
+    "runaways": 1,
+    "largest_peak": 1368.5,
+    "episodes": 20
+   },
+   "all_three": {
+    "mean": 3.9000636375342124,
+    "median": 1.12461458078778,
+    "max": 33.09560840941562,
+    "runaways": 0,
+    "largest_peak": 9.0,
+    "episodes": 20
+   }
+  },
+  "twap_market|0.4|8000": {
+   "baseline": {
+    "mean": 389.517704249455,
+    "median": 15.529227957128915,
+    "max": 3685.115184803069,
+    "runaways": 7,
+    "largest_peak": 10006.5,
+    "episodes": 20
+   },
+   "no_inv_limit": {
+    "mean": 389.6209203451956,
+    "median": 15.529227957128915,
+    "max": 3784.620430602891,
+    "runaways": 7,
+    "largest_peak": 10006.5,
+    "episodes": 20
+   },
+   "no_vol_pull": {
+    "mean": 380.80518341630653,
+    "median": 15.581493741824412,
+    "max": 3632.9836498493014,
+    "runaways": 7,
+    "largest_peak": 10003.5,
+    "episodes": 20
+   },
+   "no_switch": {
+    "mean": 128.02088859721198,
+    "median": 16.71843143005229,
+    "max": 1580.3482256556015,
+    "runaways": 6,
+    "largest_peak": 10010.5,
+    "episodes": 20
+   },
+   "spec_capacity": {
+    "mean": 11.924151625819242,
+    "median": 10.3715962247121,
+    "max": 48.96880507733836,
+    "runaways": 0,
+    "largest_peak": 459.0,
+    "episodes": 20
+   },
+   "noise_budget": {
+    "mean": 86.42488607239997,
+    "median": 14.471281540820153,
+    "max": 984.7261602495305,
+    "runaways": 4,
+    "largest_peak": 5360.0,
+    "episodes": 20
+   },
+   "all_three": {
+    "mean": 4.944433153102364,
+    "median": 2.1964228018871483,
+    "max": 34.51053083281032,
+    "runaways": 0,
+    "largest_peak": 11.0,
+    "episodes": 20
+   }
+  },
+  "pov|0.4|8000": {
+   "baseline": {
+    "mean": 360.69300638956463,
+    "median": 94.3318937717946,
+    "max": 1351.9012389785703,
+    "runaways": 11,
+    "largest_peak": 8398.5,
+    "episodes": 20
+   },
+   "no_inv_limit": {
+    "mean": 353.2475578373534,
+    "median": 95.19413331502066,
+    "max": 1295.945195336675,
+    "runaways": 11,
+    "largest_peak": 8486.0,
+    "episodes": 20
+   },
+   "no_vol_pull": {
+    "mean": 330.27328753112886,
+    "median": 29.753407690000422,
+    "max": 1186.9426027635036,
+    "runaways": 9,
+    "largest_peak": 8524.0,
+    "episodes": 20
+   },
+   "no_switch": {
+    "mean": 513.4166574362291,
+    "median": 320.29821189629934,
+    "max": 1360.7415619128635,
+    "runaways": 14,
+    "largest_peak": 7043.0,
+    "episodes": 20
+   },
+   "spec_capacity": {
+    "mean": 226.71758831679477,
+    "median": 20.6177639038741,
+    "max": 1238.4584101394532,
+    "runaways": 7,
+    "largest_peak": 5302.0,
+    "episodes": 20
+   },
+   "noise_budget": {
+    "mean": 294.1564699535369,
+    "median": 49.717325388449105,
+    "max": 1252.250314312918,
+    "runaways": 10,
+    "largest_peak": 7018.0,
+    "episodes": 20
+   },
+   "all_three": {
+    "mean": 181.38049806953086,
+    "median": 10.636501629197777,
+    "max": 1973.5657979884963,
+    "runaways": 4,
+    "largest_peak": 4906.5,
+    "episodes": 20
+   }
+  }
+ }
+}

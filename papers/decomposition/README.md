@@ -71,6 +71,11 @@ zero dials is `twap_market`, `passive=1` alone is `twap_passive`).
 | The paired-seed protocol | `decomposition.py` | `crn_variance` | `protocol/` |
 | Detection curve, randomisation value | `detection_curve.py` | `detection_curve` | `detection_curve*/` |
 | Shi-Cartlidge, Bucci et al., ABIDES-MARL | `decomposition.py` | `replications` | `replications/` |
+| What removes the runaways | | `runaway_causes` | `runaway_causes/` |
+| Training the executor in the paired worlds | `order_book/training.py` | `train_rl` | `rl/<name>/` |
+| The policies against TWAP on unseen seeds | `order_book/training.py` | `rl_eval` | `rl_eval/` |
+| Their decomposition | `decomposition.py` | `decompose --out e8_rl` (job `e8_rl`) | `e8_rl/` |
+| The market with no executor, and how configs move it | | `market_probe` | `market_probe/` |
 
 ## Pilot results
 
@@ -98,6 +103,18 @@ seeds as the pilot, and it reproduces the pilot exactly where they overlap, so t
 **In some seeds the price runs away, up to a fall of 9,966 ticks from about 10,000, and those seeds dominate the means.** Makers' `max_inventory` and the volatility pull are not the cause. Long scheduled orders
 exhaust the market's finite capital (speculator capacity first, then the noise pool); fast orders at T=2000 are a different and only partly explained mechanism, with switching contributing; `pov` at nominal 0.4, T=8000 is unexplained. Do not quote means, shares, Shapley values or exponents from those cells; see the first caveat in `paper/notes.pdf`.
 
+## The learned executor
+
+`train_rl` trains PPO inside `PairedRun`, in the market with ten times the capital. Each fill is rewarded against the reference world's mid at that step, so
+natural drift drops out of the reward exactly and what is optimised is mechanical cost plus reaction, the two parts the decomposition measures;
+`--detection-penalty` charges time spent under the makers' flow detector and `--impact-penalty` weights the price's displacement. Episodes draw a seed below
+800 and a size from `--sizes` (and a market from `--regimes`), the checkpoint is chosen on seeds 800-839 against TWAP on the same episodes, and seeds from 1000
+up are never used: `rl_eval` scores the policies on 1000-1079 and `e8_rl` decomposes them on 1020-1039. `SWEEP` in the script lists the eight variants the
+cluster trains (plain, three detection penalties, the plain-shortfall ablation, an impact penalty, mixed markets, a second seed); each is a chain of resumable
+1-hour jobs (`submit_all.sh rl`, then `rl_results`). The first-generation policies of `papers/stealth_execution` remain as inputs for the low-cover grid.
+
+**The paper is `paper/paper.pdf`.** Build it with `python -m papers.decomposition.scripts.make_paper --refresh` (or without `--refresh`, from `results/full/`), then `latexmk -pdf paper.tex` in `paper/`. Its findings replace the pilot bullets above where they differ: on mean impact, reaction lowers the exponent at T=8000 once capital is not binding. `paper/notes.tex` is older working notes whose results prose is still the pilot's.
+
 ## Read before quoting a number
 
 - The **price channel is not chartists**: it holds every reaction to the true book. Use `price_split`.
@@ -105,5 +122,4 @@ exhaust the market's finite capital (speculator capacity first, then the noise p
   against Arm 0's volume over the horizon.
 - The ghost **reverts completely by construction**, so test reversion among arms with a permanent component.
 - `cost` includes the constant half spread, so its exponent looks flat in Arm 1. Say which measure a claim rests on.
-- Claims attributed to Buffalo et al., Klein et al., Sharma, Shi-Cartlidge, Bucci et al., Gomes-Waelbroeck, Yang-Zhu and ABIDES-MARL come from the
-  research plan and have not been checked against the papers.
+- Citations in `paper/paper.tex` were checked against the sources where the plan made a specific claim. "Sharma's condition" could not be traced to any source, so the paper states the positive-correlation condition without that name; the code still calls it `sharma_holds`.

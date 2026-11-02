@@ -36,7 +36,7 @@ from order_book.counterfactual import (
     PREDATOR_CONTROL, Channels, PairedResult, PairedSpec, run_paired,
 )
 from order_book.execution import Calibration, all_baselines
-from order_book.experiments import RegimeSpec, SIZES, TEST_SEEDS
+from order_book.experiments import CAPITAL_REGIMES, RegimeSpec, SIZES, TEST_SEEDS  # noqa: F401  CAPITAL_REGIMES is re-exported
 from order_book.runner import IncompleteShards, iter_jobs, load_results, load_shards, missing_shards, seed_of_shard, shard_dir
 from order_book.scoring import bootstrap_ci, bootstrap_ratio, crn_diagnostics, holm, paired_difference
 from order_book.validation import fit_power_law
@@ -67,8 +67,6 @@ def shapley(values: dict, players: str = CHANNEL_ORDER) -> dict:
 
 # ----- the grid ---------------------------------------------------------------------------- #
 
-# The robustness check: long metaorders otherwise run the market out of capital, see the caveats in paper/notes.tex.
-CAPITAL_REGIMES = (RegimeSpec("deep_cover_capital10", 1.0, 4, capital=10), RegimeSpec("low_cover_capital10", 1.0, 1, capital=10))
 
 
 @dataclass(frozen=True)
