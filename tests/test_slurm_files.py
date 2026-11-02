@@ -73,5 +73,5 @@ def test_an_array_has_one_task_per_seed_and_a_merge_with_the_same_grid(job):
 
 def test_submit_all_only_names_jobs_that_exist():
     text = (ROOT / "papers/decomposition/slurm/submit_all.sh").read_text()
-    named = {name for group in re.findall(r"^(?:main|extras)=\((.*)\)$", text, re.M) for name in group.split()}
+    named = {name for group in re.findall(r"^(?:main|extras|capital)=\((.*)\)$", text, re.M) for name in group.split()}
     assert named == {job.stem for job in ARRAYS}

@@ -75,12 +75,14 @@ Estimates come from the pilot's timings on the Mac, where the slowest seed was 1
 
 | Job | Tasks | Runs | CPU minutes per task | Cores | Time per task |
 |---|---|---|---|---|---|
-| `e8_deep_cover` | 20 | 21,600 | 15-20 | 4 | 5 min |
+| `e8_deep_cover` | 20 | 24,000 | 15-20 | 4 | 5 min |
 | `e8_low_cover` | 20 | 28,000 | 20-30 | 4 | 7 min |
 | `e8_horizons` | 20 | 18,000 | about 25 | 8 | 3 min |
 | `protocol` | 40 | 2,400 | 1 | 4 | under 1 min |
 | `detection_curve`, `detection_curve_deep` | 20 each | 2,100 each | 2 | 4 | under 1 min |
 | `replications` | 20 | 1,840 | 2 | 4 | under 1 min |
+| `e8_capital_deep`, `e8_capital_low` | 20 each | 24,000 each | 15-20 | 4 | 5 min |
+| `e8_capital_horizons` | 20 | 18,000 | about 25 | 8 | 3 min |
 
 `e2`, `e3`, `e7`, `e7b` and `rl_heldout` in `papers/stealth_execution/slurm/` are not split: each is a single 1-hour job on 16 cores. They are not resumable, so if one hits the hour, raise its `-t` or cores.
 
@@ -102,7 +104,7 @@ bash hpc/pull.sh decomposition --all                                 # Mac: also
 To build the notes from the full run, on the **Mac**, after pulling:
 
 ```bash
-.venv/bin/python -m papers.decomposition.scripts.make_tables --root outputs/decomposition --deep e8_deep_cover --heldout outputs/stealth_execution/rl_heldout/summary.json
+.venv/bin/python -m papers.decomposition.scripts.make_tables --root outputs/decomposition --deep e8_deep_cover --heldout outputs/stealth_execution/rl_heldout/summary.json --horizons e8_horizons --curve-deep detection_curve_deep
 cd papers/decomposition/paper && latexmk -pdf notes.tex
 ```
 

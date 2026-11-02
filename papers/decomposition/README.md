@@ -57,7 +57,7 @@ python -m papers.decomposition.scripts.replications --quick
 # tables and notes, from the committed pilot or from the full run
 python -m papers.decomposition.scripts.make_tables
 python -m papers.decomposition.scripts.make_tables --root outputs/decomposition --deep e8_deep_cover \
-    --heldout outputs/stealth_execution/rl_heldout/summary.json
+    --heldout outputs/stealth_execution/rl_heldout/summary.json --horizons e8_horizons --curve-deep detection_curve_deep
 cd papers/decomposition/paper && latexmk -pdf notes.tex
 ```
 
@@ -89,6 +89,14 @@ the move into `papers/`, on simulator version 1.
   Yang and Zhu properly needs makers wired to a precise detector.
 - **The replication hooks do not cleanly confirm their sources**, and a price runaway at very large sizes is a common factor to resolve first.
 - **PPO has no gain to decompose.** On unseen seeds it is behind TWAP (`papers/stealth_execution/README.md`).
+
+## Full run
+
+Run on the cluster on 2026-11-02 (commit `2ff7294`, simulator version 1) and fetched to `outputs/decomposition/`; the pilot's outputs moved to `outputs/decomposition_pilot/`. Same
+seeds as the pilot, and it reproduces the pilot exactly where they overlap, so the bullets above still hold for those cells. The findings have not been revised against the wider grid.
+
+**In some seeds the price runs away, up to a fall of 9,966 ticks from about 10,000, and those seeds dominate the means.** Makers' `max_inventory` and the volatility pull are not the cause. Long scheduled orders
+exhaust the market's finite capital (speculator capacity first, then the noise pool); fast orders at T=2000 are a different and only partly explained mechanism, with switching contributing; `pov` at nominal 0.4, T=8000 is unexplained. Do not quote means, shares, Shapley values or exponents from those cells; see the first caveat in `paper/notes.pdf`.
 
 ## Read before quoting a number
 

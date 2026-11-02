@@ -36,14 +36,15 @@ def adversary(level: str, threshold: str = "medium", base: SimConfig | None = No
 
 
 def regime(liquidity: float = 1.0, institutions: int = 4, makers: int = 4, mm_size_scale: float = 1.0,
-           base: SimConfig | None = None) -> SimConfig:
+           base: SimConfig | None = None, capital: int = 1) -> SimConfig:
     """A market of a given liquidity and institutional cover, before detection is wired in (plan E7).
 
     ``liquidity`` scales the noise order rate, the speculator count and the market-maker quote size
     together (``< 1`` = thinner market, so a fixed-participation order is a larger share of the standing
     book and each child moves the price more); ``institutions`` sets how much legitimate large-order
     flow hides the executor (``0`` = no cover, every detected one-sided burst is the executor);
-    ``makers`` the number of market makers; ``mm_size_scale`` thins the book independently of the rest.
+    ``makers`` the number of market makers; ``mm_size_scale`` thins the book independently of the rest;
+    ``capital`` scales what speculators and the noise pool hold, which a long metaorder can otherwise exhaust.
     Compose with ``adversary``: ``adversary("A4", base=regime(liquidity=0.5, institutions=1))``.
     """
     cfg = base or SimConfig()
@@ -55,7 +56,8 @@ def regime(liquidity: float = 1.0, institutions: int = 4, makers: int = 4, mm_si
     mm = replace(template, size=(max(1, round(lo * scale)), max(2, round(hi * scale))), detector=None)
     pop = replace(cfg.population, institutions=institutions, speculators=speculators,
                   market_makers=market_makers(makers, detecting=0, base=mm))
-    return replace(cfg, noise=noise, population=pop)
+    endowment = replace(cfg.endowment, speculator=cfg.endowment.speculator * capital, noise=cfg.endowment.noise * capital)
+    return replace(cfg, noise=noise, population=pop, endowment=endowment)
 
 
 def private_valuations(base: SimConfig | None = None, adapt: float = 0.01) -> SimConfig:

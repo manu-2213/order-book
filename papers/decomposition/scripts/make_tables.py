@@ -1,10 +1,11 @@
 """Every table of the paper notes, generated from the result summaries so that nothing is copied by hand.
 
     python -m papers.decomposition.scripts.make_tables                         # from the pilot in results/pilot
-    python -m papers.decomposition.scripts.make_tables --root outputs/decomposition --deep e8_deep_cover
+    python -m papers.decomposition.scripts.make_tables --root outputs/decomposition --deep e8_deep_cover \\
+        --horizons e8_horizons --curve-deep detection_curve_deep
 
 Writes papers/decomposition/paper/tables/*.tex. Rebuild the notes afterwards with latexmk; the prose around the
-tables quotes the pilot and has to be revised by hand when the full run replaces it.
+tables is written by hand and does not follow them.
 """
 
 import argparse
@@ -21,6 +22,13 @@ def _begin(caption_label: str, columns: str) -> list[str]:
 
 
 END = r"\bottomrule\end{tabular}\end{adjustbox}\end{table}"
+END_LONG = r"\bottomrule\end{longtable}}"
+
+
+def _long(caption_label: str, columns: str, head: str, size: str = r"\scriptsize") -> list[str]:
+    """A table that may run over several pages; the full grids have up to 70 rows."""
+    return ["{" + size + r"\setlength{\tabcolsep}{2pt}", rf"\begin{{longtable}}{{{columns}}}", caption_label + r"\\\toprule", head + r"\midrule\endfirsthead",
+            r"\toprule", head + r"\midrule\endhead"]
 
 
 def main():
@@ -29,6 +37,8 @@ def main():
     parser.add_argument("--deep", default="e8_pilot", help="the deep-cover E8 run under --root")
     parser.add_argument("--low", default="e8_low_cover", help="the low-cover E8 run under --root")
     parser.add_argument("--heldout", default=None, help="rl_heldout summary; default: rl_heldout under --root")
+    parser.add_argument("--horizons", default=None, help="the horizon E8 run under --root; the pilot has none")
+    parser.add_argument("--curve-deep", default=None, help="the deep-cover detection curve under --root; the pilot has none")
     args = parser.parse_args()
     root = Path(args.root)
     load = lambda name: json.loads((root / name / "summary.json").read_text())
@@ -36,6 +46,8 @@ def main():
     proto, curve, rep = load("protocol")["summary"], load("detection_curve")["summary"], load("replications")
     held = json.loads(Path(args.heldout).read_text()) if args.heldout else load("rl_heldout")
     tables = build(pilot, low, proto, curve, rep, held)
+    tables["horizons"] = horizons_table(load(args.horizons)) if args.horizons else ""
+    tables["curve_deep"] = curve_table(load(args.curve_deep)["summary"], "deep-cover", "tab:curve_deep") if args.curve_deep else ""
     out = HERE / "paper" / "tables"
     out.mkdir(parents=True, exist_ok=True)
     for name, text in tables.items():
@@ -59,18 +71,50 @@ def executor(name: str) -> str:
     return code(name)
 
 
+def _decomposition_row(strategy: str, size: str, r: dict) -> str:
+    p = r["shapley"]
+    return (f"{code(strategy)} & {float(size):.2f} & {r['realised_q_over_v']:.3f} & {r['is']['arm5'][0]:.2f} & {r['natural_drift'][0]:.2f} & "
+            f"{r['mechanical'][0]:.2f} & {ci(r['reaction'])} & {r['reaction_share'][0]:.2f} & {p['inventory']['mean']:+.2f} & "
+            f"{p['price']['mean']:+.2f} & {p['detection']['mean']:+.2f} & {p['predation']['mean']:+.2f}")
+
+
+DECOMPOSITION_HEAD = r"Executor & $Q/V$ & Real & IS & Drift & Mech. & Reaction & Share & $\phi_I$ & $\phi_P$ & $\phi_D$ & $\phi_A$\\"
+
+
+def horizons_table(run: dict) -> str:
+    lines = _long(r"\caption{The decomposition by horizon, deep-cover market. Columns as in Table~\ref{tab:e8_deep}. A horizon lengthens the execution at the same nominal $Q/V$, so the order is larger in lots.}\label{tab:e8_horizons}",
+                  "@{}rlrrrrrlrrrrr@{}", "$T$ & " + DECOMPOSITION_HEAD, r"\tiny")
+    rows = run["summary"]["rows"]
+    for key in sorted(rows, key=lambda k: (int(k.split("|")[3]), k.split("|")[1], float(k.split("|")[2]))):
+        _, strategy, size, horizon = key.split("|")
+        lines.append(f"{horizon} & {_decomposition_row(strategy, size, rows[key])}\\\\")
+    return "\n".join(lines + [END_LONG])
+
+
+def curve_table(curve: dict, market: str, label: str) -> str:
+    axes = curve["medium"]["axes"]
+    base = axes["participation"][0]["detectors"]
+    lines = _begin(rf"\caption{{The detection curve at the medium threshold, {market} market. Signal is the mean signal in the executor's direction. Leakage in bps.}}\label{{{label}}}", "@{}lrrrrrl@{}")
+    lines.append(rf"Axis, value & Flow signal & A3 signal & A3 duty & A3 latency & Flow latency & Leakage\\ Arm 0 & {base['flow_medium']['signal_arm0']:+.3f} & {base['learned']['signal_arm0']:+.3f} & {base['learned']['duty_arm0']:.3f} & & & \\\midrule")
+    labels = {"participation": "Nominal $Q/V$", "timing_jitter": "Timing jitter", "size_jitter": "Size jitter", "passive_share": "Passive share"}
+    for axis, rows in axes.items():
+        for r in rows:
+            f, l = r["detectors"]["flow_medium"], r["detectors"]["learned"]
+            lines.append(f"{labels[axis]} {r['value']:.2f} & {f['signal'][0]:+.3f} & {l['signal'][0]:+.3f} & {l['duty'][0]:.3f} & {l['latency_median']:.0f} & {f['latency_median']:.0f} & {ci(r['leakage'])}\\\\")
+        lines.append(r"\midrule")
+    lines.pop()
+    return "\n".join(lines + [END])
+
+
 def build(pilot, low, proto, curve, rep, held) -> dict:
     tables = {}
 
-    lines = _begin(r"\caption{The decomposition, deep-cover market, $T=2000$. Costs in bps. ``Real'' is $Q/V$ realised against Arm~0's volume. Reaction with its 95\% CI.}\label{tab:e8_deep}", "@{}lrrrrrlrrrrr@{}")
-    lines.append(r"Executor & $Q/V$ & Real & IS & Drift & Mech. & Reaction & Share & $\phi_I$ & $\phi_P$ & $\phi_D$ & $\phi_A$\\\midrule")
+    lines = _long(r"\caption{The decomposition, deep-cover market, $T=2000$. Costs in bps. ``Real'' is $Q/V$ realised against Arm~0's volume. Reaction with its 95\% CI.}\label{tab:e8_deep}",
+                  "@{}lrrrrrlrrrrr@{}", DECOMPOSITION_HEAD)
     for key, r in pilot["summary"]["rows"].items():
         _, strategy, size, _ = key.split("|")
-        p = r["shapley"]
-        lines.append(f"{code(strategy)} & {float(size):.2f} & {r['realised_q_over_v']:.3f} & {r['is']['arm5'][0]:.2f} & {r['natural_drift'][0]:.2f} & "
-                     f"{r['mechanical'][0]:.2f} & {ci(r['reaction'])} & {r['reaction_share'][0]:.2f} & {p['inventory']['mean']:+.2f} & "
-                     f"{p['price']['mean']:+.2f} & {p['detection']['mean']:+.2f} & {p['predation']['mean']:+.2f}\\\\")
-    tables["deep"] = "\n".join(lines + [END])
+        lines.append(_decomposition_row(strategy, size, r) + "\\\\")
+    tables["deep"] = "\n".join(lines + [END_LONG])
 
     lines = _begin(r"\caption{Inside the reaction for \code{twap\_market}, deep cover. Left: inventory's increment depends on when it joins. Right: IS with the group live minus IS with the group blind, in Arm~2. These controls do not add up: removing fundamentalists lets the price run away.}\label{tab:e8_split}", "@{}rrrlll@{}")
     lines.append(r"$Q/V$ & Inv.\ after price & Inv.\ before price & Chartists & Makers & Fundamentalists\\\midrule")
@@ -96,15 +140,15 @@ def build(pilot, low, proto, curve, rep, held) -> dict:
         lines.append(rf"\multicolumn{{3}}{{@{{}}l}}{{{label}}} & \multicolumn{{3}}{{l|}}{{{interval(a['tests'][name])}}} & \multicolumn{{5}}{{l}}{{{interval(b['tests'][name])}}}\\")
     tables["concavity"] = "\n".join(lines + [END])
 
-    lines = _begin(r"\caption{The executors in the low-cover market. ``Net'' is IS minus drift. Differences are against \code{twap\_market} on the same seeds. Very large values come from a few runaway seeds; see the caveats.}\label{tab:e8_low}", "@{}lrrrrll@{}")
-    lines.append(r"Executor & $Q/V$ & Net & Mech. & Share & $\Delta$ mech. & $\Delta$ reaction\\\midrule")
+    lines = _long(r"\caption{The executors in the low-cover market. ``Net'' is IS minus drift. Differences are against \code{twap\_market} on the same seeds. Very large values come from seeds where the price runs away; see the caveats.}\label{tab:e8_low}",
+                  "@{}lrrrrll@{}", r"Executor & $Q/V$ & Net & Mech. & Share & $\Delta$ mech. & $\Delta$ reaction\\")
     for key, r in low["summary"]["rows"].items():
         _, strategy, size, _ = key.split("|")
         e = low["executors"].get(key)
         net = r["is"]["arm5"][0] - r["natural_drift"][0]
         lines.append(f"{executor(strategy)} & {float(size):.2f} & {net:.2f} & {r['mechanical'][0]:.2f} & {r['reaction_share'][0]:.2f} & "
                      f"{ci(e['d_mechanical']) if e else '--'} & {ci(e['d_reaction']) if e else '--'}\\\\")
-    tables["low"] = "\n".join(lines + [END])
+    tables["low"] = "\n".join(lines + [END_LONG])
 
     lines = _begin(r"\caption{The protocol. Left: median variance reduction over cells per contrast. Right: background order flow shared by Arm~0 and Arm~5, per fifth of the window.}\label{tab:protocol}", r"@{}lrr@{\hskip 2em}lrrrrr@{}")
     lines.append(r"Contrast & Stateful & Counter & Scheme & 1st & 2nd & 3rd & 4th & 5th\\\midrule")
@@ -117,18 +161,7 @@ def build(pilot, low, proto, curve, rep, held) -> dict:
         lines.append(f"{name.replace('(', '(Arm ')} & {modes['stateful']['median_variance_reduction']:.1f} & {modes['counter']['median_variance_reduction']:.1f} & {right}\\\\")
     tables["protocol"] = "\n".join(lines + [END])
 
-    axes = curve["medium"]["axes"]
-    base = axes["participation"][0]["detectors"]
-    lines = _begin(r"\caption{The detection curve at the medium threshold, low-cover market. Signal is the mean signal in the executor's direction. Leakage in bps.}\label{tab:curve}", "@{}lrrrrrl@{}")
-    lines.append(rf"Axis, value & Flow signal & A3 signal & A3 duty & A3 latency & Flow latency & Leakage\\ Arm 0 & {base['flow_medium']['signal_arm0']:+.3f} & {base['learned']['signal_arm0']:+.3f} & {base['learned']['duty_arm0']:.3f} & & & \\\midrule")
-    labels = {"participation": "Nominal $Q/V$", "timing_jitter": "Timing jitter", "size_jitter": "Size jitter", "passive_share": "Passive share"}
-    for axis, rows in axes.items():
-        for r in rows:
-            f, l = r["detectors"]["flow_medium"], r["detectors"]["learned"]
-            lines.append(f"{labels[axis]} {r['value']:.2f} & {f['signal'][0]:+.3f} & {l['signal'][0]:+.3f} & {l['duty'][0]:.3f} & {l['latency_median']:.0f} & {f['latency_median']:.0f} & {ci(r['leakage'])}\\\\")
-        lines.append(r"\midrule")
-    lines.pop()
-    tables["curve"] = "\n".join(lines + [END])
+    tables["curve"] = curve_table(curve, "low-cover", "tab:curve")
 
     sc, bucci = list(rep["shi_cartlidge"]["rows"].values()), list(rep["bucci"].items())
     lines = _begin(r"\caption{Replication hooks, deep cover. Left: Shi--Cartlidge, reaction by POV rate. Right: Bucci et al., exponents on the mid's displacement at small and large sizes, with the interval on their difference.}\label{tab:replications}", r"@{}rrl@{\hskip 2em}lrrl@{}")

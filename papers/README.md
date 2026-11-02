@@ -42,4 +42,4 @@ Inputs the cluster needs from `outputs/`, like a trained policy, have to be list
 | Paper | Status |
 |---|---|
 | `stealth_execution` | Run; its RL gains do not survive unseen seeds, see its README |
-| `decomposition` | Instrument built and tested, pilot run, full run pending on the cluster |
+| `decomposition` | Full run done; price runaways in some cells partly explained, see its README |

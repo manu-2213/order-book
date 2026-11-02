@@ -67,6 +67,10 @@ def shapley(values: dict, players: str = CHANNEL_ORDER) -> dict:
 
 # ----- the grid ---------------------------------------------------------------------------- #
 
+# The robustness check: long metaorders otherwise run the market out of capital, see the caveats in paper/notes.tex.
+CAPITAL_REGIMES = (RegimeSpec("deep_cover_capital10", 1.0, 4, capital=10), RegimeSpec("low_cover_capital10", 1.0, 1, capital=10))
+
+
 @dataclass(frozen=True)
 class DecompositionConfig:
     """E8: the channel decomposition over executors, sizes and horizons.

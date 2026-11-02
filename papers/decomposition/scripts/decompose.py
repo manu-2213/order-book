@@ -15,6 +15,7 @@ import argparse
 from dataclasses import replace
 
 from papers.decomposition.decomposition import (
+    CAPITAL_REGIMES,
     DecompositionConfig, compare_executors, format_concavity, format_controls, format_decomposition, format_executors,
     merge_grid, run_grid, run_shard, summarise_concavity, summarise_decomposition,
 )
@@ -24,15 +25,18 @@ from order_book.runner import shard_dir
 from papers.decomposition import OUT
 from scripts._common import calibration_or_default, write_json
 
+REGIMES = DEFAULT_REGIMES + CAPITAL_REGIMES
+
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seeds", type=int, default=20, help="test seeds 1000..1000+n-1")
+    parser.add_argument("--seeds", type=int, default=20, help="test seeds first-seed..first-seed+n-1")
+    parser.add_argument("--first-seed", type=int, default=1000, help="1020 for seeds the design was not chosen on")
     parser.add_argument("--strategies", nargs="+", default=None, help="baseline names, pov@rate, twap@dials or rl@path")
     parser.add_argument("--rl", default=None, help="add the learned executor from these weights")
     parser.add_argument("--sizes", type=float, nargs="+", default=None)
     parser.add_argument("--horizons", type=int, nargs="+", default=None)
-    parser.add_argument("--regime", default="deep_cover", choices=[r.name for r in DEFAULT_REGIMES])
+    parser.add_argument("--regime", default="deep_cover", choices=[r.name for r in REGIMES])
     parser.add_argument("--threshold", default="medium", choices=("lenient", "medium", "strict"))
     parser.add_argument("--mode", default="shapley", choices=("shapley", "ladder"))
     parser.add_argument("--no-controls", action="store_true", help="skip the four cells outside the factorial")
@@ -47,8 +51,8 @@ def main():
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--quick", action="store_true")
     args = parser.parse_args()
-    regime = next(r for r in DEFAULT_REGIMES if r.name == args.regime)
-    cfg = DecompositionConfig(seeds=tuple(range(1000, 1000 + args.seeds)), regime=regime, threshold=args.threshold,
+    regime = next(r for r in REGIMES if r.name == args.regime)
+    cfg = DecompositionConfig(seeds=tuple(range(args.first_seed, args.first_seed + args.seeds)), regime=regime, threshold=args.threshold,
                               mode=args.mode, controls=not args.no_controls, rng=args.rng, burn_in=args.burn_in,
                               after=args.after)
     if args.strategies:

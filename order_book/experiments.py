@@ -228,10 +228,11 @@ class RegimeSpec:
     institutions: int = 4           # institutional traders providing cover (0 = none)
     makers: int = 4
     mm_size_scale: float = 1.0      # thins the book independently of ``liquidity``
+    capital: int = 1                # scales what speculators and the noise pool hold
 
     def base(self) -> SimConfig:
         from order_book.presets import regime
-        return regime(self.liquidity, self.institutions, self.makers, self.mm_size_scale)
+        return regime(self.liquidity, self.institutions, self.makers, self.mm_size_scale, capital=self.capital)
 
 
 DEFAULT_REGIMES = (
