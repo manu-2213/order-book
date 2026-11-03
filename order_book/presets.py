@@ -6,7 +6,7 @@ the market makers' response mapping is the same everywhere.
 
 from dataclasses import replace
 
-from order_book.config import FlowDetectorConfig, MarketMakerConfig, PopulationConfig, SimConfig, market_makers
+from order_book.config import FlowDetectorConfig, MarketMakerConfig, SimConfig
 
 FLOW_THRESHOLDS = {"lenient": 0.2, "medium": 0.3, "strict": 0.45}
 
@@ -22,13 +22,12 @@ def adversary(level: str, threshold: str = "medium", base: SimConfig | None = No
     cfg = base or SimConfig()
     pop = cfg.population
     n = len(pop.market_makers)
-    template = replace(pop.market_makers[0], detector=None) if pop.market_makers else None
+    wired = lambda d: tuple(replace(m, detector="flow" if i < d else None) for i, m in enumerate(pop.market_makers))
     if level == "A0":
-        pop = replace(pop, market_makers=market_makers(n, detecting=0, base=template), anticipators=0)
+        pop = replace(pop, market_makers=wired(0), anticipators=0)
     elif level in ("A1", "A4"):
         d = min(2, n) if detecting is None else min(detecting, n)
-        pop = replace(pop, market_makers=market_makers(n, detecting=d, base=template),
-                      anticipators=1 if level == "A4" else 0)
+        pop = replace(pop, market_makers=wired(d), anticipators=1 if level == "A4" else 0)
         cfg = replace(cfg, flow_detector=FlowDetectorConfig(threshold=FLOW_THRESHOLDS[threshold]))
     else:
         raise ValueError(f"levels A2, A3 and A5 need detectors that are not implemented yet; got {level!r}")
@@ -50,12 +49,11 @@ def regime(liquidity: float = 1.0, institutions: int = 4, makers: int = 4, mm_si
     cfg = base or SimConfig()
     noise = replace(cfg.noise, rate=cfg.noise.rate * liquidity)
     speculators = max(1, round(cfg.population.speculators * liquidity))
-    template = cfg.population.market_makers[0] if cfg.population.market_makers else MarketMakerConfig()
-    lo, hi = template.size
+    templates = cfg.population.market_makers or (MarketMakerConfig(),)
     scale = liquidity * mm_size_scale
-    mm = replace(template, size=(max(1, round(lo * scale)), max(2, round(hi * scale))), detector=None)
+    scaled = lambda m: replace(m, size=(max(1, round(m.size[0] * scale)), max(2, round(m.size[1] * scale))), detector=None)
     pop = replace(cfg.population, institutions=institutions, speculators=speculators,
-                  market_makers=market_makers(makers, detecting=0, base=mm))
+                  market_makers=tuple(scaled(templates[i % len(templates)]) for i in range(makers)))
     endowment = replace(cfg.endowment, speculator=cfg.endowment.speculator * capital, noise=cfg.endowment.noise * capital)
     return replace(cfg, noise=noise, population=pop, endowment=endowment)
 

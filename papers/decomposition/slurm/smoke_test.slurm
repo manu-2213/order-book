@@ -30,6 +30,11 @@ python -u -m papers.decomposition.scripts.decompose --quick --workers $SLURM_NTA
 python -u -m papers.decomposition.scripts.detection_curve --quick --workers $SLURM_NTASKS > /dev/null
 python -u -m papers.decomposition.scripts.crn_variance --quick --workers $SLURM_NTASKS > /dev/null
 python -u -m papers.decomposition.scripts.replications --quick --workers $SLURM_NTASKS > /dev/null
+python -u -m papers.decomposition.scripts.runaway_causes --quick --workers $SLURM_NTASKS > /dev/null
+python -u -m papers.decomposition.scripts.market_probe --quick --workers $SLURM_NTASKS > /dev/null
+# The training path: a few iterations, a checkpoint, then the evaluation of what it saved.
+python -u -m papers.decomposition.scripts.train_rl --quick --name smoke --workers $SLURM_NTASKS > /dev/null
+python -u -m papers.decomposition.scripts.rl_eval --quick --policies outputs/decomposition/rl_quick/smoke/best_policy.pt --workers $SLURM_NTASKS > /dev/null
 # The path the real jobs take: two shards, then the merge. Shards always resume, so start from nothing.
 rm -rf outputs/decomposition/smoke_shards_quick
 for shard in 1 2; do

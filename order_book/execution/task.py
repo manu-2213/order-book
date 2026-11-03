@@ -174,7 +174,7 @@ class ExecutorAgent(Agent):
         resting = m.book.get_client_orders(self.cid)
         window = ps.flow_window
         window_flow = ps.buy_flow_all + ps.sell_flow_all  # the true tape: hiding from detectors changes no decision
-        own_window = sum(self._own_window[-window:])
+        own_window = sum(self._own_window[-window - 1:-1])  # the finished steps the public window covers; this step's slot is still 0
         executed = self._executed()
         return ExecState(
             step=m.step, elapsed=elapsed, horizon=task.horizon, decision_interval=task.decision_interval,

@@ -80,12 +80,22 @@ Estimates come from the pilot's timings on the Mac, where the slowest seed was 1
 | `e8_horizons` | 20 | 18,000 | about 25 | 8 | 3 min |
 | `protocol` | 40 | 2,400 | 1 | 4 | under 1 min |
 | `detection_curve`, `detection_curve_deep` | 20 each | 2,100 each | 2 | 4 | under 1 min |
-| `replications` | 20 | 1,840 | 2 | 4 | under 1 min |
+| `replications` | 20 | 1,360 | 2 | 4 | under 1 min |
 | `e8_capital_deep`, `e8_capital_low` | 20 each | 24,000 each | 15-20 | 4 | 5 min |
 | `e8_capital_horizons` | 20 | 18,000 | about 25 | 8 | 3 min |
 | `train_rl` | 10 variants | 1,000 PPO or GRPO iterations each | about 370 per hour per task (9.6 s an iteration) | 16 | 3 chained hours; `CHAIN=4` leaves a margin |
 | `rl_eval` | 1 | 10 policies x up to 6 cells x 120 seeds, plus TWAP once per episode | about 25 | 16 | 20 min |
 | `e8_rl` | 20 | 14,400 | about 10 | 8 | 3 min |
+| `runaway_causes` | 1 | 1,120 | about 20 | 16 | 20 min |
+| `market_probe` | 1 | 13 configs x 20 seeds | a few | 16 | a few min |
+| `rl_heldout` (stealth_execution) | 1 | 2 policies x 120 seeds x 2 | about 10 | 16 | a few min |
+
+**The final run.** Every number the paper quotes comes from one simulator version, so after a version bump everything is rerun:
+regenerate the inputs on the Mac first (`python -m scripts.calibrate`, then `python -m scripts.train_detector`; about 15 minutes),
+push, run the smoke test, then `bash papers/decomposition/slurm/submit_all.sh final`, which submits the grids, the single jobs, the
+stealth paper's `rl_heldout`, the training chain and, behind it, the results jobs. Delete the old `outputs/decomposition` and
+`outputs/stealth_execution/rl_heldout` on the cluster first: shards and `train_rl` resume, and `write_manifest` refuses to resume
+across versions, so stale folders fail loudly rather than mix.
 
 `train_rl` is the one job that outlives an hour. Each task checkpoints before the walltime and the next link of the chain resumes it;
 a link that finds its run finished exits at once, so an extra link costs nothing. `submit_all.sh rl` chains 4 links and queues `rl_eval` and

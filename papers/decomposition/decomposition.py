@@ -615,11 +615,10 @@ def _log_slope(x: np.ndarray, y: np.ndarray) -> float:
 def abides_specs(strategies=("twap_market", "twap@size=0.5,timing=0.3", "twap_random", "mimic"), sizes=(0.20, 0.40),
                  seeds=tuple(TEST_SEEDS), regime: RegimeSpec = DEEP_COVER, horizon: int = 2_000, burn_in: int = 2_000,
                  after: int = 500, rng: str = "counter") -> list[PairedSpec]:
-    """Predictable and randomised acquirers in the arms that switch quote-lifting on: no reaction, A1 and A4."""
+    """Predictable and randomised acquirers with and without detection and predation: Arms 3 and 5, the two the summary compares."""
     common = _common(regime, horizon, burn_in, after, rng)
     return [PairedSpec(seed, strategy, size, channels, regime=f"abides|{regime.name}", **common)
-            for seed in seeds for strategy in strategies for size in sizes
-            for channels in (GHOST, ARMS[2], ARMS[3], ARMS[4], ARMS[5])]
+            for seed in seeds for strategy in strategies for size in sizes for channels in (ARMS[3], ARMS[5])]
 
 
 def summarise_abides(results: list[PairedResult], predictable: str = "twap_market") -> dict:

@@ -17,7 +17,10 @@ class NoiseFlow(Agent):
     limits at the opposite best, the rest rest Geometric ticks behind it
     (mean ``mean_offset`` + 1). The bid probability is tilted by
     ``balance_weight`` toward the pool's cash share of wealth, so the pool
-    cannot run itself out of cash or stock in a long trend.
+    cannot run itself out of cash or stock in a long trend. The pool stands
+    for many traders, so its orders trade against its own resting ones
+    (``stp_mode``); with the book's self-trade prevention most of its
+    aggressive orders would be cancelled instead.
     """
 
     def __init__(self, *args, cfg: NoiseFlowConfig | None = None):
@@ -48,7 +51,7 @@ class NoiseFlow(Agent):
             side = "bid" if bids[i] else "ask"
             quantity = int(sizes[i])
             if kinds[i] < cfg.market_frac:
-                m.market(cid, side, (quantity + 1) // 2)
+                m.market(cid, side, (quantity + 1) // 2, cfg.stp_mode)
                 continue
             bid, ask = book.best_bid, book.best_ask
             if side == "bid":
@@ -57,4 +60,4 @@ class NoiseFlow(Agent):
             else:
                 opposite = bid if bid is not None else round(m.public.mid) - 1
                 price = opposite if kinds[i] < cross else opposite + int(offsets[i])
-            m.limit(cid, side, price, quantity)
+            m.limit(cid, side, price, quantity, cfg.stp_mode)

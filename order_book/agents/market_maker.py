@@ -146,5 +146,9 @@ class MarketMaker(Agent):
                     bid = min(bid, best - 1.0)
                 else:
                     ask = max(ask, best + 1.0)
-        self._requote("bid", own["bid"], bid, scale["bid"], inventory < cfg.max_inventory and scale["bid"] > 0)
-        self._requote("ask", own["ask"], ask, scale["ask"], inventory > -cfg.max_inventory and scale["ask"] > 0)
+        # after a jump the new bid can reach the old ask (or the new ask the old bid): move that quote first, or the
+        # book's self-trade prevention cancels the new one and the maker is one-sided for a step
+        order = ("ask", "bid") if own["ask"] is not None and bid >= own["ask"]["price"] else ("bid", "ask")
+        for side in order:
+            allowed = (inventory < cfg.max_inventory) if side == "bid" else (inventory > -cfg.max_inventory)
+            self._requote(side, own[side], bid if side == "bid" else ask, scale[side], allowed and scale[side] > 0)

@@ -85,7 +85,8 @@ class GhostMarket(Market):
 
     def _take(self, side: str, cid: int, price: int | None, quantity: int) -> None:
         book = self.book
-        report = book.market(side, cid, quantity) if price is None else book.ioc(side, cid, price, quantity)
+        # a lot that traded in Arm 0 trades here whoever rests, so the copy's self-trade prevention is off for it
+        report = book.market(side, cid, quantity, "none") if price is None else book.ioc(side, cid, price, quantity, "none")
         self.stats["lapsed"] += report["cancelled_quantity"]
         self._settle(report)
 

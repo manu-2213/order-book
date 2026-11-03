@@ -222,6 +222,9 @@ class InstitutionalTrader(Agent):
         horizon = max(1, rec.planned_end - rec.start)
         elapsed = min(horizon, m.step - rec.start + self.cfg.interval)
         k = self.cfg.front_load / horizon
-        scheduled_remaining = rec.total * math.sinh(k * (horizon - elapsed)) / math.sinh(k * horizon)
+        if self.cfg.front_load < 1e-9:  # the limit of the sinh schedule is a straight line
+            scheduled_remaining = rec.total * (horizon - elapsed) / horizon
+        else:
+            scheduled_remaining = rec.total * math.sinh(k * (horizon - elapsed)) / math.sinh(k * horizon)
         self._send(math.ceil(self._remaining() - scheduled_remaining))
         self.next_step = m.step + self.cfg.interval

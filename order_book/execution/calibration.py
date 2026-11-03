@@ -88,9 +88,8 @@ def calibrate(seeds, fractions=(0.05, 0.1, 0.2), horizon: int = 2_000, burn_in: 
     fill_filled = dict(fill_posted)
     window = horizon + after + 1
     for seed in seeds:
-        # background path, depth, sigma, fill probabilities
+        # background path, depth and sigma from a run nobody probes; fill probabilities from a separate run with the prober
         sim = Simulator(int(seed), cfg)
-        prober = sim.add_external(FillProber, 10_000 * cfg.book.mid, 10_000, interval=decision_interval)
         sim.run(burn_in)
         ps, mids, depth = sim.market.public, np.empty(window), []
         for t in range(window):
@@ -100,6 +99,9 @@ def calibrate(seeds, fractions=(0.05, 0.1, 0.2), horizon: int = 2_000, burn_in: 
                 depth.append(np.mean([sum(v for p, v in sim.book.levels(side)[:5]) for side in ("bid", "ask")]))
         sigmas.append(np.diff(mids).std())
         depths.append(np.mean(depth))
+        probe = Simulator(int(seed), cfg)
+        prober = probe.add_external(FillProber, 10_000 * cfg.book.mid, 10_000, interval=decision_interval)
+        probe.run(burn_in + window)
         for d in fill_posted:
             fill_posted[d] += prober.posted[d]
             fill_filled[d] += prober.filled[d]

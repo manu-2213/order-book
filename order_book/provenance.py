@@ -23,7 +23,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-SIMULATOR_VERSION = "1"
+SIMULATOR_VERSION = "2"  # 2 (2026-11-03): noise pool without self-trade prevention, maker requote order, executor flow window
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_FILE = ROOT / ".source_version"

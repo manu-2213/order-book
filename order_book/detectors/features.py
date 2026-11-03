@@ -60,7 +60,7 @@ class FeatureTracker:
         f[5] = self.regularity()
         recent = sum(c for _, _, c, _ in list(self._flow)[-20:])
         long = sum(c for _, _, c, _ in self._flow)
-        f[6] = (recent / 20) / (long / len(self._flow)) if long else 1.0
+        f[6] = (recent / min(20, len(self._flow))) / (long / len(self._flow)) if long else 1.0
         if len(self._mids) > 1:
             scale = math.sqrt(max(public.var_fast, 1e-6) * (len(self._mids) - 1))
             f[7] = (self._mids[-1] - self._mids[0]) / scale

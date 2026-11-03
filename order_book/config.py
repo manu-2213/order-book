@@ -31,6 +31,10 @@ class FlowDetectorConfig:
     memory: int = 10              # EWMA span over the rolling flow imbalance
     threshold: float = 0.3        # |EWMA imbalance| below this gives no signal
 
+    def __post_init__(self):
+        if not 0 <= self.threshold < 1:
+            raise ValueError("threshold is a fraction of full imbalance and must be in [0, 1)")
+
 
 @dataclass(frozen=True)
 class FundamentalConfig:
@@ -58,6 +62,7 @@ class NoiseFlowConfig:
     market_frac: float = 0.15     # share of orders sent as (half-size) market orders
     cross_frac: float = 0.05      # share sent as marketable limits at the opposite best
     balance_weight: float = 0.5   # tilt of the bid probability toward the pool's cash share
+    stp_mode: str = "none"        # the pool stands for many traders in one account, so its orders trade against its own
 
 
 @dataclass(frozen=True)
@@ -143,6 +148,10 @@ class OrderAnticipatorConfig:
     contrarian_first: bool = False  # trade against the flow first, then with it (van Kervel-Menkveld)
     switch_after: int = 50        # contrarian mode: steps of confident signal before switching sides
 
+    def __post_init__(self):
+        if not 0 <= self.threshold < 1:
+            raise ValueError("threshold is a fraction of full signal and must be in [0, 1)")
+
 
 def market_makers(n: int = 4, detecting: int = 2, detector: str = "flow",
                   base: MarketMakerConfig | None = None) -> tuple[MarketMakerConfig, ...]:
@@ -172,7 +181,6 @@ class EndowmentConfig:
 
 @dataclass(frozen=True)
 class SimConfig:
-    step_seconds: float = 1.0     # wall-clock meaning of one step; all rates are per step
     rng: str = "stateful"         # "stateful": one sequential stream per agent; "counter": see ``order_book.rng``
     book: BookConfig = field(default_factory=BookConfig)
     public: PublicStateConfig = field(default_factory=PublicStateConfig)

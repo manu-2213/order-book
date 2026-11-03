@@ -103,6 +103,12 @@ seeds as the pilot, and it reproduces the pilot exactly where they overlap, so t
 **In some seeds the price runs away, up to a fall of 9,966 ticks from about 10,000, and those seeds dominate the means.** Makers' `max_inventory` and the volatility pull are not the cause. Long scheduled orders
 exhaust the market's finite capital (speculator capacity first, then the noise pool); fast orders at T=2000 are a different and only partly explained mechanism, with switching contributing; `pov` at nominal 0.4, T=8000 is unexplained. Do not quote means, shares, Shapley values or exponents from those cells; see the first caveat in `paper/notes.pdf`.
 
+## Simulator version
+
+Everything in `results/full/` must come from one simulator version (`order_book/provenance.py`, recorded in every manifest). The paper's
+final run is on version 2; the pilot and the first full run were version 1, whose noise pool lost most of its aggressive orders to self-trade
+prevention, so their numbers are not comparable. `submit_all.sh final` reruns everything the paper reads.
+
 ## The learned executor
 
 `train_rl` trains the executor inside `PairedRun`, in the market with ten times the capital. The reward is the shortfall minus a uniform schedule's drift

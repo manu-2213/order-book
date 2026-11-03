@@ -33,6 +33,19 @@ FINGERPRINTS = {
         "paired IP": 0.12222833363894459,
         "paired full": 0.05555833347142069,
     },
+    # 2: the noise pool trades without self-trade prevention, makers move the quote that would be crossed first,
+    # the executor's own-flow window covers the same steps as the public one, the trade-rate feature's first steps
+    "2": {
+        "stateful default": "41152116476dc482",
+        "stateful A4": "2b7ff62a7f8be797",
+        "stateful private": "dcbbb122ba295992",
+        "counter default": "27b6e300217252b5",
+        "episode shortfall": 2.2428931371124676,
+        "episode path": "82e7f2ff2a021e1e",
+        "paired ghost": -1.7731072209277636,
+        "paired IP": -1.551468818311793,
+        "paired full": -1.4741530964697318,
+    },
 }
 
 

@@ -8,7 +8,7 @@
 #SBATCH --mem-per-cpu=1G         # a worker peaks near 200 MB
 #SBATCH -t 1:0:0
 #SBATCH -a 1-20
-# The replication hooks, one seed per task, 20 seeds, 1,840 runs.
+# The replication hooks, one seed per task, 20 seeds, 1,360 runs.
 # Submit with hpc/submit.sh, which queues the merge after it. A task killed at the hour keeps its finished runs; the merge prints what to resubmit.
 set -eo pipefail
 cd "$SLURM_SUBMIT_DIR/../../.."

@@ -328,7 +328,7 @@ def test_replication_specs_cover_their_grids():
     assert len(specs) == 2 * 2 and {s.detecting for s in specs} == {0, 4} and all(s.channels == ARMS[4] for s in specs)
     assert specs[0].config().population.market_makers[0].detector is None
     assert specs[-1].config().population.market_makers[3].detector == "flow"
-    assert len(abides_specs(strategies=("a", "b"), sizes=(0.2,), seeds=(1,), **QUICK)) == 2 * 5
+    assert len(abides_specs(strategies=("a", "b"), sizes=(0.2,), seeds=(1,), **QUICK)) == 2 * 2
 
 
 # ----- end to end on the real simulator ------------------------------------------------------- #

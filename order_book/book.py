@@ -299,7 +299,7 @@ class OrderBook:
             else:
                 resting.quantity -= quantity
                 volumes[price] -= quantity
-        return trades, stp_cancelled, cancelled, self._refresh(opposite)
+        return trades, stp_cancelled, cancelled, []  # removing orders cannot push the opposite side past its window
 
     def _submit(self, side: Side, client_id, quantity, price, stp_mode,
                 replacement: _Order | None = None, rest: bool = True) -> Report:
@@ -393,7 +393,6 @@ class OrderBook:
         order = self._owned(order_id, client_id)
         self._remove(order)
         cancelled, order.quantity = order.quantity, 0
-        self._refresh(order.side)
         return self._lifecycle_report(order, "cancel", cancelled)
 
     def modify_order(self, order_id: int, new_quantity: int | None = None,

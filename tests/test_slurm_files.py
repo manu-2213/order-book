@@ -88,7 +88,9 @@ def test_an_array_has_one_task_per_seed_and_a_merge_with_the_same_grid(job):
     assert strip(command(job)) == strip(command(merge)), "the merge must expect exactly the grid the array runs"
 
 
-def test_submit_all_only_names_jobs_that_exist():
+def test_submit_all_names_every_job_of_the_paper_and_nothing_else():
     text = (ROOT / "papers/decomposition/slurm/submit_all.sh").read_text()
     named = {name for group in re.findall(r"^\w+=\((.*)\)$", text, re.M) for name in group.split()}
-    assert named == {job.stem for job in ARRAYS} | {"rl_eval"}
+    jobs = {job.stem for job in JOBS if job.parents[1].name == "decomposition" and job.stem != "smoke_test" and not job.stem.endswith("_merge")}
+    assert named == jobs
+    assert "final)" in text and "rl_heldout" in text, "the final run also reruns the first-generation policies' held-out evaluation"

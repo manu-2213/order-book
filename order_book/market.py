@@ -129,8 +129,8 @@ class Market:
 
     # ----- actions --------------------------------------------------------- #
 
-    def limit(self, cid: int, side: Side, price: int, quantity: int) -> Report | None:
-        """Funded limit order; outside-window orders are dropped, never moved."""
+    def limit(self, cid: int, side: Side, price: int, quantity: int, stp_mode: str | None = None) -> Report | None:
+        """Funded limit order; outside-window orders are dropped, never moved. ``stp_mode`` overrides the book's."""
         if price < 1 or quantity < 1:
             return None
         edge = self.book.edge(side)
@@ -144,12 +144,12 @@ class Market:
         if quantity < 1:
             self.budget_rejects[side] += 1
             return None
-        report = self._settle(self.book.limit(side, cid, price, quantity))
+        report = self._settle(self.book.limit(side, cid, price, quantity, stp_mode))
         if self.mirror is not None:
             self.mirror.on_order(report)
         return report
 
-    def market(self, cid: int, side: Side, quantity: int) -> Report | None:
+    def market(self, cid: int, side: Side, quantity: int, stp_mode: str | None = None) -> Report | None:
         account = self.accounts[cid]
         if side == "bid":  # walk the ask levels so the buy is always funded
             cash, affordable = account.free_cash, 0
@@ -165,7 +165,7 @@ class Market:
         if quantity < 1:
             self.budget_rejects[side] += 1
             return None
-        report = self._settle(self.book.market(side, cid, quantity))
+        report = self._settle(self.book.market(side, cid, quantity, stp_mode))
         if self.mirror is not None:
             self.mirror.on_order(report)
         return report

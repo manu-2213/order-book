@@ -85,6 +85,8 @@ class VolumeClockDetector(_FeatureDetector):
 
     def __init__(self, threshold: float = 0.3):
         super().__init__()
+        if not 0 <= threshold < 1:
+            raise ValueError("threshold is a fraction of full imbalance and must be in [0, 1)")
         self.threshold = threshold
 
     def update(self, public: PublicState) -> float:
