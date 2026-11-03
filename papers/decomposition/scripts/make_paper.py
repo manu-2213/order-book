@@ -445,7 +445,7 @@ def main():
                   causes=causes_table(load("runaway_causes")["summary"]), routes=routes_table(runs["low"]), curve=curve_pair_table(curve, deep_curve))
     tables.update(rl_eval=rl_eval_table(load("rl_eval")), e8_rl=e8_rl_table(load("e8_rl")), rl_split=rl_split_table(load("e8_rl")), rl_ceiling=rl_ceiling_table(load("rl_ceiling")),
                   rl_pooled=rl_pooled_table(json.loads((RESULTS / "rl_eval" / "analysis.json").read_text())))
-    lt = "large-tick market (low cover, ten times the capital, a spread of about five ticks)"
+    lt = "wide-spread market (low cover, ten times the capital, a spread of about five ticks)"
     large_tick = {"rl_pooled_lt": lambda: rl_pooled_table(json.loads((RESULTS / "rl_eval_large_tick" / "analysis.json").read_text()), lt, "_lt"),
                   "e8_rl_lt": lambda: e8_rl_table(load("e8_rl_large_tick"), lt, "_lt"), "rl_split_lt": lambda: rl_split_table(load("e8_rl_large_tick"), lt, "_lt"),
                   "rl_ceiling_lt": lambda: rl_ceiling_table(load("rl_ceiling_large_tick"), lt, "_lt")}
