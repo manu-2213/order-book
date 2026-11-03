@@ -52,8 +52,8 @@ class SignalTwap(Strategy):
 
 
 class PostAndHold(Strategy):
-    """Posts a slice at own best (or ``behind`` ticks behind it) and leaves it resting, so queue priority is kept; market
-    orders only catch up the schedule, and the last two decisions cross what is left."""
+    """Posts a slice at own best, ``behind`` ticks behind it or, when negative, inside it, and leaves it resting, so queue
+    priority is kept; market orders only catch up the schedule, and the last two decisions cross what is left."""
 
     def __init__(self, behind: int = 0):
         self.behind = behind
@@ -64,13 +64,13 @@ class PostAndHold(Strategy):
             return Decision(cancel=True, market_qty=s.remaining)
         catch_up = max(0, math.floor(s.quantity * s.elapsed / s.horizon) - s.executed - s.own_resting)
         slice_qty = math.ceil(max(0, s.remaining - s.own_resting - catch_up) / s.decisions_left)
-        return Decision(cancel=False, market_qty=catch_up, limit_qty=slice_qty, limit_price=None if self.behind == 0 else s.behind(self.behind))
+        return Decision(cancel=False, market_qty=catch_up, limit_qty=slice_qty, limit_price=None if self.behind == 0 else s.behind(self.behind) if self.behind > 0 else s.inside(-self.behind))
 
 
 HEURISTICS = ("twap_market", "twap_passive", "twap_random", "pov@0.2", "pov@0.3", "pov@0.5", "almgren_chriss_1e-05", "almgren_chriss_1e-06",
               "almgren_chriss_1e-07", "obizhaeva_wang", "limit_market", "footprint", "mimic", "twap@passive=0.25", "twap@passive=0.5",
               "twap@passive=0.75", "twap@passive=1", "twap@timing=0.3", "twap@size=0.5", "twap@size=0.5,timing=0.3,passive=0.5",
-              "signal@+0.5", "signal@-0.5", "signal@+1", "signal@-1", "signal@+0.5,1", "signal@-0.5,1", "hold@0", "hold@1")
+              "signal@+0.5", "signal@-0.5", "signal@+1", "signal@-1", "signal@+0.5,1", "signal@-0.5,1", "hold@0", "hold@1", "hold@-1")
 
 
 def strategy(name: str) -> Strategy:
@@ -159,7 +159,7 @@ def main(argv=None):
     market = args.regime
     names, sizes, seeds, decomposed, horizon, burn_in = HEURISTICS, SIZES, UNSEEN, DECOMPOSED, 2_000, 2_000
     if args.quick:
-        names, sizes, seeds, decomposed, horizon, burn_in = ("twap_market", "twap_passive", "signal@+0.5", "hold@0"), (0.4,), UNSEEN[:2], DECOMPOSED[:2], 200, 400
+        names, sizes, seeds, decomposed, horizon, burn_in = ("twap_market", "twap_passive", "signal@+0.5", "hold@0", "hold@-1"), (0.4,), UNSEEN[:2], DECOMPOSED[:2], 200, 400
     name = "rl_ceiling" if market == DEFAULT_MARKET else f"rl_ceiling_{market.removeprefix('low_cover_')}"
     out = OUT / (f"{name}_quick" if args.quick else name)  # a smoke test never overwrites real results
     out.mkdir(parents=True, exist_ok=True)

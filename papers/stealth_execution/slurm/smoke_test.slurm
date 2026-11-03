@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH -J smoke_test
 #SBATCH -o logs/%x.o%j
-#SBATCH -e logs/%x.e%j
 #SBATCH -p compute,computeshort
 #SBATCH -N 1                    # the workers are processes on one machine, so all tasks must share a node
 #SBATCH -n 8

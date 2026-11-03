@@ -1,21 +1,22 @@
 [
  {
   "simulator_version": "2",
-  "commit": "f9c3baf2bd62d1f5dd3dbb98fcdf9ec78ed8e065",
-  "dirty": true,
-  "origin": "git",
+  "commit": "a8c04e257cfaf37a07a733811b24cee359d8566a",
+  "dirty": false,
+  "origin": ".source_version",
   "resumed": false,
   "argv": [
-   "/Users/manu13/Desktop/PHD/order-book/papers/decomposition/scripts/rl_ceiling.py",
+   "/data/home/acw796/order-book/papers/decomposition/scripts/rl_ceiling.py",
    "--workers",
-   "7"
+   "16"
   ],
-  "time_utc": "2026-11-03T15:59:26+00:00",
-  "host": "Mac.mynet",
-  "slurm_job_id": null,
+  "time_utc": "2026-11-03T19:21:47+00:00",
+  "host": "ehc3",
+  "slurm_job_id": "35345469",
   "python": "3.11.7",
   "numpy": "2.4.6",
   "config": {
+   "market": "low_cover_capital10",
    "heuristics": [
     "twap_market",
     "twap_passive",

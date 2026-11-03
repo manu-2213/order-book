@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH -J e8_rl_merge
 #SBATCH -o logs/%x.o%j
-#SBATCH -e logs/%x.e%j
 #SBATCH -p compute,computeshort # a 1-hour limit qualifies for the short queue
 #SBATCH -N 1                    # the workers are processes on one machine, so all tasks must share a node
 #SBATCH -n 8

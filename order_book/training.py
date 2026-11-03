@@ -35,7 +35,7 @@ import numpy as np
 
 from order_book.config import SimConfig
 from order_book.counterfactual import FULL, Channels, PairedRun, PairedSpec, burned_in
-from order_book.execution import ExecutionTask, PolicyNet, PolicyStrategy, Transition, make_strategy, new_policy
+from order_book.execution import ExecutionTask, PolicyNet, PolicyStrategy, Transition, make_strategy
 from order_book.execution.ppo import PPOConfig, PPOTrainer, _gae
 from order_book.experiments import CAPITAL_REGIMES
 from order_book.scoring import paired_difference
@@ -184,7 +184,7 @@ def _init_worker(env: PairedExecutionEnv) -> None:
     import torch
     torch.set_num_threads(1)  # workers are the unit of parallelism
     _WORKER["env"] = env
-    _WORKER["net"] = None
+    _WORKER["nets"] = {}
 
 
 def _rollout_job(job: tuple) -> tuple[list[Transition], EpisodeRecord]:
@@ -194,9 +194,10 @@ def _rollout_job(job: tuple) -> tuple[list[Transition], EpisodeRecord]:
     env = _WORKER["env"]
     if isinstance(weights, str):
         return env.rollout(make_strategy(weights), seed, size, config_index)
-    if _WORKER["net"] is None:
-        _WORKER["net"] = new_policy()
-    net = _WORKER["net"]
+    shape = (weights["trunk.0.weight"].shape[1], weights["actor.weight"].shape[0], weights["trunk.0.weight"].shape[0])  # features, actions, hidden
+    if shape not in _WORKER["nets"]:  # a policy saved before a feature or an action was appended keeps its own shape
+        _WORKER["nets"][shape] = PolicyNet(*shape)
+    net = _WORKER["nets"][shape]
     net.load_state_dict(weights)
     return env.rollout(PolicyStrategy(net, deterministic=greedy, sample=sample), seed, size, config_index)
 

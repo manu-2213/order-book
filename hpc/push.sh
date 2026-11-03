@@ -4,8 +4,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source hpc/settings.sh
+commit="$(git rev-parse HEAD 2>/dev/null)" || { echo "push.sh runs on the Mac: the cluster has no .git, and running it there blanks the commit in every manifest"; exit 1; }
 dirty=false
 [ -n "$(git status --porcelain -- order_book papers scripts)" ] && dirty=true
-printf '{"commit": "%s", "dirty": %s}\n' "$(git rev-parse HEAD)" "$dirty" > .source_version
+printf '{"commit": "%s", "dirty": %s}\n' "$commit" "$dirty" > .source_version
 [ "$dirty" = true ] && echo "note: pushing uncommitted changes; manifests will say dirty=true"
 rsync -avz --progress --filter="merge hpc/rsync.filter" "$@" ./ "$HPC_USER@$HPC_HOST:$HPC_REPO/"

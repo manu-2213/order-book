@@ -137,7 +137,7 @@ def main(argv=None):
         groups = {"validation": VALIDATION_SEEDS[:2], "unseen": (FIRST_TEST_SEED, FIRST_TEST_SEED + 1)}
     name = "rl_eval" if args.sweep_set == "base" else f"rl_eval_{args.sweep_set}"
     out = OUT / (f"{name}_quick" if args.quick else name)  # a smoke test never overwrites real results
-    write_manifest(out, vars(args))
+    out.mkdir(parents=True, exist_ok=True)
     rows, twap, episodes = [], {}, []
     for policy in policies:
         rows += evaluate(policy, groups, args.workers, args.quick, twap, episodes)
@@ -147,6 +147,7 @@ def main(argv=None):
             sink.write(json.dumps(episode) + "\n")
     write_json(rows, out / "summary.json")
     write_json(analyse(episodes, None if args.policies else SWEEP_MARKET[args.sweep_set]), out / "analysis.json")
+    write_manifest(out, vars(args))  # last: results are only written at the end, so a job that dies must not relabel the old ones
 
 
 if __name__ == "__main__":

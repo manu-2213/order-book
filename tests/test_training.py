@@ -5,7 +5,6 @@ import torch
 
 from order_book.counterfactual import FULL, run_paired
 from order_book.execution import PolicyNet, PolicyStrategy, make_strategy, new_policy
-from order_book.execution.features import N_FEATURES
 from order_book.execution.ppo import PPOConfig
 from order_book.experiments import CAPITAL_REGIMES, RegimeSpec
 from order_book.training import (
@@ -97,11 +96,18 @@ def test_a_greedy_rollout_is_the_agent_the_decomposition_scores(tmp_path):
     assert sampled.cost_is != pytest.approx(record.cost_is)
 
 
-def test_a_net_trained_before_a_feature_was_appended_still_runs():
+def test_a_net_trained_before_a_feature_or_action_was_appended_still_runs():
     env = PairedExecutionEnv(**QUICK)
-    old = PolicyNet(n_features=N_FEATURES - 1)
-    _, r = env.rollout(PolicyStrategy(old, deterministic=True), 8, 0.1)
-    assert r.executed == r.quantity
+    old = PolicyNet(n_features=14, n_actions=15)
+    _, direct = env.rollout(PolicyStrategy(old, deterministic=True), 8, 0.1)
+    assert direct.executed == direct.quantity
+    for workers in (1, 2):  # through the workers too, as rl_eval runs it, alongside a policy of the current shape
+        rollouts = Rollouts(env, workers)
+        try:
+            results = rollouts.run([(cpu_state_dict(old), True, 8, 0.1, 0, 0), (cpu_state_dict(new_policy(seed=1)), True, 8, 0.1, 0, 0)])
+        finally:
+            rollouts.close()
+        assert results[0][1] == direct and results[1][1].executed == results[1][1].quantity
 
 
 # ----- the trainer ---------------------------------------------------------------------------- #

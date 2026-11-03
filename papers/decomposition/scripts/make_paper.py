@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from order_book.scoring import holm
+from order_book.scoring import holm, paired_difference
 from papers.decomposition import OUT
 from papers.decomposition.scripts.make_tables import AXIS_LABELS, build, ci, code, executor, horizons_table, interval, phi_cells
 from papers.decomposition.scripts.runaway_causes import RUNAWAY_TICKS, VARIANTS
@@ -57,6 +57,24 @@ def tails(grid: str) -> dict:
     return out
 
 
+def against_best_rule(policies: list[dict], rules: list[dict], ceiling: dict) -> dict:
+    """Each policy minus the ceiling's best heuristic, per seed, over the sizes the ceiling runs. Same seeds, so it is paired."""
+    best = min(ceiling["ceiling"], key=lambda name: ceiling["ceiling"][name]["pooled"]["mean"])
+    rule = {(r["size"], r["seed"]): r["cost_is"] for r in rules if r["part"] == "ceiling" and r["strategy"] == best}
+    sizes, seeds = sorted({z for z, _ in rule}), sorted({s for _, s in rule})
+    index = {(e["name"], e["size"], e["seed"]): e["cost_is"] for e in policies if e["regime"] == ceiling["market"]}
+    names = [n for n in dict.fromkeys(e["name"] for e in policies if e["regime"] == ceiling["market"]) if n != "twap_market"]
+    pooled = lambda cost: np.mean([[cost(z, s) for s in seeds] for z in sizes], axis=0)
+    rows = {n: paired_difference(pooled(lambda z, s: index[(n, z, s)]), pooled(lambda z, s: rule[(z, s)])) for n in names}
+    for row, p in zip(rows.values(), holm([row["p_two_sided"] for row in rows.values()])):
+        row["p_holm"] = p
+    return {"rule": best, "market": ceiling["market"], "sizes": sizes, "policies": rows}
+
+
+def read_jsonl(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
 def refresh() -> None:
     RESULTS.mkdir(parents=True, exist_ok=True)
     for name in (*GRIDS.values(), *OTHERS, *LARGE_TICK):
@@ -67,6 +85,10 @@ def refresh() -> None:
             if (OUT / name / file).exists():
                 shutil.copy(OUT / name / file, RESULTS / name / file)
     (RESULTS / "tails.json").write_text(json.dumps({key: tails(grid) for key, grid in GRIDS.items()}))
+    if (OUT / "rl_eval_large_tick" / "episodes.jsonl").exists():
+        policies = read_jsonl(OUT / "rl_eval_large_tick" / "episodes.jsonl")
+        (RESULTS / "rl_eval_large_tick" / "against_best_rule.json").write_text(json.dumps(
+            [against_best_rule(policies, read_jsonl(OUT / c / "episodes.jsonl"), json.loads((OUT / c / "summary.json").read_text())) for c in ("rl_ceiling_large_tick", "rl_ceiling")], indent=1))
     heldout = OUT.parent / "stealth_execution" / "rl_heldout" / "summary.json"
     (RESULTS / "rl_heldout").mkdir(exist_ok=True)
     shutil.copy(heldout, RESULTS / "rl_heldout" / "summary.json")
@@ -203,7 +225,7 @@ def rl_pooled_table(analysis: dict, market: str = "low-cover market with ten tim
 
 
 def rl_split_table(run: dict, market: str = "low-cover market with ten times the capital", tag: str = "") -> str:
-    """Where the policies' costs move at the largest size. A star marks an interval that survives Holm across the 30 policy cells."""
+    """Where the policies' costs move at the largest size. A star marks an interval that survives Holm across all the policy cells."""
     keys = [k for k in run["executors"] if "|rl@" in k]
     stars = {field: {k: p < 0.05 for k, p in zip(keys, holm([run["executors"][k][field]["p_two_sided"] for k in keys]))} for field in ("d_is", "d_mechanical", "d_reaction")}
     lines = [r"Policy & $\Delta$ IS & $\Delta$ mechanical & $\Delta$ reaction & $\phi_P$ & $\phi_D$\\\midrule"]
@@ -220,7 +242,7 @@ def rl_split_table(run: dict, market: str = "low-cover market with ten times the
 
 def rl_ceiling_table(summary: dict, market: str = "low-cover market with ten times the capital", tag: str = "") -> str:
     """What tuned heuristics gain over TWAP on the policies' unseen seeds, and what stealth would be worth under a stronger adversary."""
-    labels = {"hold@0": "post-and-hold at own best", "hold@1": "post-and-hold one tick behind", "signal@+0.5": "momentum TWAP, $k = +0.5$",
+    labels = {"hold@0": "post-and-hold at own best", "hold@1": "post-and-hold one tick behind", "hold@-1": "post-and-hold one tick inside", "signal@+0.5": "momentum TWAP, $k = +0.5$",
               "signal@-0.5": "momentum TWAP, $k = -0.5$", "signal@+1": "momentum TWAP, $k = +1$", "signal@-1": "momentum TWAP, $k = -1$",
               "signal@+0.5,1": "momentum TWAP, $k = +0.5$, slower", "signal@-0.5,1": "momentum TWAP, $k = -0.5$, slower"}
     lines = [r"Executor & $\Delta$ IS, 0.2 & $\Delta$ IS, 0.4 & Pooled & Holm $p$ & Passive & Forced\\\midrule"]

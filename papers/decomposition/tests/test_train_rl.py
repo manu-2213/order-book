@@ -88,11 +88,26 @@ def test_the_ceiling_script_runs_and_its_summary_pairs_by_seed():
     rl_ceiling.main(["--quick", "--regime", "low_cover_large_tick", "--workers", "2"])
     summary = json.loads((OUT / "rl_ceiling_large_tick_quick" / "summary.json").read_text())
     assert summary["market"] == "low_cover_large_tick"
-    assert set(summary["ceiling"]) == {"twap_passive", "signal@+0.5", "hold@0"} and set(summary["adversary"]) == {"medium", "lenient", "lenient_x3", "lenient_x3_0.6"}
+    assert set(summary["ceiling"]) == {"twap_passive", "signal@+0.5", "hold@0", "hold@-1"} and set(summary["adversary"]) == {"medium", "lenient", "lenient_x3", "lenient_x3_0.6"}
     row = summary["ceiling"]["hold@0"]
     assert row["pooled"]["n"] == 2 and "p_holm" in row["pooled"] and 0 <= row["passive"] <= 1
     assert all(len(v["detection_predation"]) == 3 for v in summary["adversary"].values())
     assert all(isinstance(rl_ceiling.strategy(n).name, str) for n in rl_ceiling.HEURISTICS)
+
+
+def test_policies_are_compared_with_the_best_rule_seed_by_seed_in_its_market():
+    from papers.decomposition.scripts.make_paper import against_best_rule
+    seeds, sizes = range(1000, 1020), (0.2, 0.4)
+    noise = lambda s: (s * 37 % 11) - 5  # large and shared by seed, so only a paired difference cancels it
+    rule = lambda name, gain: [{"part": "ceiling", "strategy": name, "size": z, "seed": s, "cost_is": 5 + noise(s) + gain} for z in sizes for s in seeds]
+    rules = rule("best", -1.0) + rule("worse", -0.5) + rule("twap_market", 0.0) + [{"part": "adversary"}]
+    ceiling = {"market": "m", "ceiling": {"best": {"pooled": {"mean": -1.0}}, "worse": {"pooled": {"mean": -0.5}}}}
+    policy = lambda name, regime, gain: [{"name": name, "regime": regime, "size": z, "seed": s, "cost_is": 5 + noise(s) + gain} for z in (0.1, *sizes) for s in seeds]
+    episodes = policy("a", "m", -3.0) + policy("b", "m", -1.0) + policy("elsewhere", "other", -9.0) + policy("twap_market", "m", 0.0)
+    out = against_best_rule(episodes, rules, ceiling)
+    assert out["rule"] == "best" and out["sizes"] == [0.2, 0.4] and set(out["policies"]) == {"a", "b"}
+    assert out["policies"]["a"]["mean"] == pytest.approx(-2.0) and out["policies"]["a"]["high"] == pytest.approx(-2.0)
+    assert out["policies"]["b"]["mean"] == pytest.approx(0.0) and out["policies"]["a"]["p_holm"] < 0.05
 
 
 def test_the_results_jobs_are_queued_behind_the_training_chain():

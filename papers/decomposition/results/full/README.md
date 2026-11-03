@@ -14,6 +14,6 @@ Each folder holds `summary.json` and the `manifest.json` that names its commit, 
 | `runaway_causes` | switching causes of the runaways off after the arrival | 1000-1019 |
 | `rl_eval` | the ten policies against TWAP, greedy, by cell (`summary.json`) and per seed (`analysis.json`) | 800-879 and 1000-1079 |
 | `e8_rl` | the policies' decomposition next to TWAP | 1020-1039 |
-| `rl_ceiling` | 27 heuristics against TWAP on the policies' unseen seeds; detection and predation under a stronger adversary | 1000-1079; 1020-1039 |
-| `rl_eval_large_tick`, `e8_rl_large_tick`, `rl_ceiling_large_tick` | the same three in the large-tick market | as above |
+| `rl_ceiling` | 28 heuristics against TWAP on the policies' unseen seeds; detection and predation under a stronger adversary | 1000-1079; 1020-1039 |
+| `rl_eval_large_tick`, `e8_rl_large_tick`, `rl_ceiling_large_tick` | the same three in the large-tick market; `against_best_rule.json` holds each policy minus the best heuristic, per seed, in both markets | as above |
 | `rl_heldout` | the sweep's two best PPO policies on selected and unseen seeds | see the file |

@@ -26,7 +26,7 @@ def test_a_job_requests_what_the_guide_asks_and_its_name_matches_its_file(job):
     assert text.startswith("#!/bin/bash\n")
     assert directive(text, "-J") == job.stem
     tag = "%A.%a" if directive(text, "-a") else "%j"
-    assert directive(text, "-o") == f"logs/%x.o{tag}" and directive(text, "-e") == f"logs/%x.e{tag}"
+    assert directive(text, "-o") == f"logs/%x.o{tag}" and directive(text, "-e") is None, "one log per job, with its errors in it"
     assert directive(text, "-N") == "1", "workers are processes on one machine"
     assert int(directive(text, "-n")) >= 1
     assert re.fullmatch(r"\d+[MG]", directive(text, "--mem-per-cpu")), "the guide wants an integer amount per core"

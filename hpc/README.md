@@ -16,7 +16,7 @@ are no banks to build. Every job asks for 1 hour, so it qualifies for the short 
 | Everything cluster-specific | `hpc/settings.sh` |
 | Venv | `.venv` on the cluster, built by `hpc/setup_venv.sh` |
 | Results | `outputs/<paper>/<run>/`, each with `manifest.json` |
-| Logs | `papers/<paper>/slurm/logs/<job>.o<id>` and `.e<id>` |
+| Logs | `papers/<paper>/slurm/logs/<job>.o<id>`, one per job or task, with errors in it; `hpc/logs.sh` finds the failed ones |
 | Limits | 240 h maximum runtime; `compute` nodes have 36 or 48 cores and about 362 GB |
 
 ## Before the first run
@@ -52,7 +52,7 @@ Then read `papers/decomposition/slurm/logs/smoke_test.o<id>`:
 - **`FINGERPRINT MATCHES` or `FINGERPRINT DIFFERS`**: whether the cluster reproduces the Mac's runs bit for bit. `DIFFERS` is not a failure. It means results here are valid but not
   byte-comparable with the pilot, so compare them statistically and do not mix runs from the two machines in one grid.
 - **The benchmark lines**: real steps per second, to check the walltimes below.
-- **`logs/smoke_test.e<id>`**: tracebacks.
+- **The end of the same file**: tracebacks, if it failed.
 
 **4. Cluster: submit.**
 
@@ -117,6 +117,8 @@ both the array and merge job files, and the results are then not comparable with
 ```bash
 squeue --me                                                          # cluster
 tail -f papers/decomposition/slurm/logs/e8_deep_cover.o<id>.<task>   # cluster: progress of one task
+bash hpc/logs.sh                                                     # cluster: what failed in the last 3 days, with each log and its last line
+bash hpc/logs.sh --tidy                                              # cluster: move finished logs to logs/old/ before a new run; deletes nothing, keeps the smoke test's
 jobstats                                                             # cluster: memory requested against used; lower --mem-per-cpu if far apart
 scancel <id>                                                         # cluster
 ARRAY=3,7 bash hpc/submit.sh decomposition e8_deep_cover             # cluster: resubmit tasks a merge reported missing
@@ -144,7 +146,7 @@ Inherited from DeepHedging, plus this repo's own.
 - **Do not push engine code while jobs are queued.** A job that starts later would run different code from the ones before it. On a change in behaviour, manifests refuse to resume across simulator versions.
   A change that keeps the fingerprints but alters behaviour they do not reach would slip through, so wait, or use a new output folder.
 - **Results are never pushed.** `hpc/rsync.filter` sends only the listed inputs from `outputs/`, so a push cannot overwrite a result.
-- **No `.git` on the cluster.** `push.sh` writes the commit to `.source_version`, and manifests cite it. Commit before pushing, or manifests will say `dirty: true`.
+- **No `.git` on the cluster.** `push.sh` writes the commit to `.source_version`, and manifests cite it. Commit before pushing, or manifests will say `dirty: true`. It runs on the Mac only and refuses to run on the cluster.
 - **Tasks can be resubmitted as often as needed:** results are flushed line by line.
 - **Email only comes from the merge.** The cluster does not send it for array jobs, so a killed task only shows up when the merge fails.
 - **`e2`, `e3`, `e7` and `e7b` do not resume or split.** Only the decomposition's scripts do.
