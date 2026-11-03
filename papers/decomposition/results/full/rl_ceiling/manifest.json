@@ -1,0 +1,65 @@
+[
+ {
+  "simulator_version": "2",
+  "commit": "f9c3baf2bd62d1f5dd3dbb98fcdf9ec78ed8e065",
+  "dirty": true,
+  "origin": "git",
+  "resumed": false,
+  "argv": [
+   "/Users/manu13/Desktop/PHD/order-book/papers/decomposition/scripts/rl_ceiling.py",
+   "--workers",
+   "7"
+  ],
+  "time_utc": "2026-11-03T15:59:26+00:00",
+  "host": "Mac.mynet",
+  "slurm_job_id": null,
+  "python": "3.11.7",
+  "numpy": "2.4.6",
+  "config": {
+   "heuristics": [
+    "twap_market",
+    "twap_passive",
+    "twap_random",
+    "pov@0.2",
+    "pov@0.3",
+    "pov@0.5",
+    "almgren_chriss_1e-05",
+    "almgren_chriss_1e-06",
+    "almgren_chriss_1e-07",
+    "obizhaeva_wang",
+    "limit_market",
+    "footprint",
+    "mimic",
+    "twap@passive=0.25",
+    "twap@passive=0.5",
+    "twap@passive=0.75",
+    "twap@passive=1",
+    "twap@timing=0.3",
+    "twap@size=0.5",
+    "twap@size=0.5,timing=0.3,passive=0.5",
+    "signal@+0.5",
+    "signal@-0.5",
+    "signal@+1",
+    "signal@-1",
+    "signal@+0.5,1",
+    "signal@-0.5,1",
+    "hold@0",
+    "hold@1"
+   ],
+   "sizes": [
+    0.2,
+    0.4
+   ],
+   "seeds": [
+    1000,
+    1079
+   ],
+   "adversary_seeds": [
+    1020,
+    1039
+   ],
+   "horizon": 2000,
+   "burn_in": 2000
+  }
+ }
+]

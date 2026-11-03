@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
+from order_book.scoring import holm
 from papers.decomposition import OUT
 from papers.decomposition.scripts.make_tables import AXIS_LABELS, build, ci, code, executor, horizons_table, interval, phi_cells
 from papers.decomposition.scripts.runaway_causes import RUNAWAY_TICKS, VARIANTS
@@ -24,8 +25,8 @@ GENERATED = HERE / "paper" / "generated"
 
 GRIDS = {"deep": "e8_deep_cover", "low": "e8_low_cover", "horizons": "e8_horizons",
          "deep_cap": "e8_capital_deep", "low_cap": "e8_capital_low", "horizons_cap": "e8_capital_horizons"}
-OTHERS = ("protocol", "detection_curve", "detection_curve_deep", "replications", "runaway_causes")
-PENDING = ("rl_eval", "e8_rl")   # the second-generation policies; their tables appear once the cluster run is back
+OTHERS = ("protocol", "detection_curve", "detection_curve_deep", "replications", "runaway_causes", "rl_eval", "e8_rl", "rl_ceiling")
+LARGE_TICK = ("rl_eval_large_tick", "e8_rl_large_tick", "rl_ceiling_large_tick")   # the second RL study; its tables appear once its run is back
 EXECUTORS = ("twap_market", "twap_passive", "twap_random", "pov", "almgren_chriss_1e-05", "almgren_chriss_1e-06", "almgren_chriss_1e-07",
              "obizhaeva_wang", "immediate", "limit_market", "mimic", "footprint")
 TAIL_CELLS = (("twap_market", 0.4, 2000), ("twap_market", 0.4, 8000), ("pov", 0.4, 2000), ("immediate", 0.4, 2000))
@@ -58,11 +59,11 @@ def tails(grid: str) -> dict:
 
 def refresh() -> None:
     RESULTS.mkdir(parents=True, exist_ok=True)
-    for name in (*GRIDS.values(), *OTHERS, *PENDING):
-        if name in PENDING and not (OUT / name / "summary.json").exists():
+    for name in (*GRIDS.values(), *OTHERS, *LARGE_TICK):
+        if name in LARGE_TICK and not (OUT / name / "summary.json").exists():
             continue
         (RESULTS / name).mkdir(exist_ok=True)
-        for file in ("summary.json", "manifest.json"):
+        for file in ("summary.json", "analysis.json", "manifest.json"):
             if (OUT / name / file).exists():
                 shutil.copy(OUT / name / file, RESULTS / name / file)
     (RESULTS / "tails.json").write_text(json.dumps({key: tails(grid) for key, grid in GRIDS.items()}))
@@ -182,7 +183,7 @@ def routes_table(low: dict) -> str:
              r"Executor & $\Delta$ mechanical & $\Delta$ reaction & $\Delta$ mechanical & $\Delta$ reaction\\\midrule"]
     names = [k.split("|")[1] for k in low["executors"] if k.split("|")[2] == "0.2"]
     for name in names:
-        if name in ("immediate", "limit_market", "pov"):  # runaways dominate these means at the larger size
+        if name in ("immediate", "limit_market", "pov") or name.startswith("rl@"):  # runaways dominate these means; the policies have their own section
             continue
         cells = [low["executors"][f"low_cover|{name}|{size}|2000"] for size in ("0.2", "0.4")]
         lines.append(f"{executor(name)} & " + " & ".join(f"{ci(e['d_mechanical'])} & {ci(e['d_reaction'])}" for e in cells) + r"\\")
@@ -190,30 +191,55 @@ def routes_table(low: dict) -> str:
                  "tab:routes", "@{}lllll@{}", lines)
 
 
-def ppo_names(low: dict) -> list[str]:
-    return sorted({k.split("|")[1] for k in low["summary"]["rows"] if "|rl@" in k}, key=lambda name: "sz0.40" in name)
+def rl_pooled_table(analysis: dict, market: str = "low-cover market with ten times the capital", tag: str = "") -> str:
+    """Each policy pooled over sizes, per seed, in the one market every policy of the set is scored in."""
+    lines = [r"Policy & IS $-$ TWAP & Holm $p$ & Median & Net of drift & Drift & Drift at zero TWAP drift & Forced & Hold & Exposure\\\midrule"]
+    for name, r in analysis["policies"].items():
+        low_high = r["drift_intercept"]
+        lines.append(f"{code(name)} & {ci(r['is'])} & {r['is']['p_holm']:.2f} & {r['median_is']:+.2f} & {ci(r['net'])} & {ci(r['drift'])} & "
+                     f"{low_high[0]:+.2f} [{low_high[1]:+.2f}, {low_high[2]:+.2f}] & {r['forced']:.3f} & {r['hold']:.2f} & {r['mean_exposure']:.3f}\\\\")
+    return table(r"The policies against \code{twap\_market} on seeds 1000--1079, none used in training or selection, greedy, " + market + r", $T = 2000$, pooled over nominal $Q/V$ of 0.1, 0.2 and 0.4, in basis points with 95\% intervals over seeds. Median is that of the per-seed IS difference. Drift at zero TWAP drift is the intercept of the per-seed drift difference on what TWAP paid in drift. Forced is the share of the order pushed through at the horizon, Hold the share of decisions to send nothing, Exposure the mean signal of the makers' detector in the executor's direction, " + f"{analysis['twap_exposure']:.3f} for TWAP.",
+                 "tab:rl_pooled" + tag, "@{}lllrlllrrr@{}", lines)
 
 
-def ppo_table(low: dict) -> str:
-    lines = [r"Nominal & Forced & Passive & Mech. & Reaction & Share & $\phi_I$ & $\phi_P$ & $\phi_D$ & $\phi_A$ & $\Delta$ IS & $\Delta$ mech. & $\Delta$ reaction\\\midrule"]
-    sizes = ("0.02", "0.05", "0.1", "0.2", "0.4")
-    for name, title in ((n, f"Panel: {executor(n)}") for n in ppo_names(low)):
-        lines.append(rf"\multicolumn{{13}}{{@{{}}l}}{{\emph{{{title}}}}}\\")
-        for size in sizes:
-            r, e = low["summary"]["rows"][f"low_cover|{name}|{size}|2000"], low["executors"][f"low_cover|{name}|{size}|2000"]
-            lines.append(f"{float(size):.2f} & {r['forced_share']:.3f} & {1 - r['aggressive_share']:.2f} & {r['mechanical'][0]:.2f} & {ci(r['reaction'])} & {r['reaction_share'][0]:.2f} & "
-                         f"{phi_cells(r)} & {ci(e['d_is'])} & {ci(e['d_mechanical'])} & {ci(e['d_reaction'])}\\\\")
-    lines.append(r"\multicolumn{13}{@{}l}{\emph{Panel: \code{twap\_market}, the reference}}\\")
-    for size in sizes:
-        r = low["summary"]["rows"][f"low_cover|twap_market|{size}|2000"]
-        lines.append(f"{float(size):.2f} & {r['forced_share']:.3f} & {1 - r['aggressive_share']:.2f} & {r['mechanical'][0]:.2f} & {ci(r['reaction'])} & {r['reaction_share'][0]:.2f} & "
-                     f"{phi_cells(r)} & & & \\\\")
-    return table(r"The decomposition of the PPO policies, low-cover main market, $T = 2000$, seeds 1000--1019, in basis points with 95\% intervals. Forced is the share of the order pushed through at the horizon, Passive the share of volume not sent aggressively. $\Delta$ is against \code{twap\_market} on the same seeds.",
-                 "tab:ppo", "@{}rrrrlrrrrrlll@{}", lines)
+def rl_split_table(run: dict, market: str = "low-cover market with ten times the capital", tag: str = "") -> str:
+    """Where the policies' costs move at the largest size. A star marks an interval that survives Holm across the 30 policy cells."""
+    keys = [k for k in run["executors"] if "|rl@" in k]
+    stars = {field: {k: p < 0.05 for k, p in zip(keys, holm([run["executors"][k][field]["p_two_sided"] for k in keys]))} for field in ("d_is", "d_mechanical", "d_reaction")}
+    lines = [r"Policy & $\Delta$ IS & $\Delta$ mechanical & $\Delta$ reaction & $\phi_P$ & $\phi_D$\\\midrule"]
+    rows = run["summary"]["rows"]
+    for key in [k for k in keys if k.split("|")[2] == "0.4"]:
+        e, p = run["executors"][key], rows[key]["shapley"]
+        cell = lambda field: ci(e[field]) + ("$^{*}$" if stars[field][key] else "")
+        lines.append(f"{code(key.split('|')[1].split('/')[-2])} & {cell('d_is')} & {cell('d_mechanical')} & {cell('d_reaction')} & {p['price']['mean']:+.2f} & {p['detection']['mean']:+.2f}\\\\")
+    twap = rows[next(k for k in rows if "|twap_market|0.4|" in k)]["shapley"]
+    lines.append(rf"\midrule \code{{twap\_market}} & & & & {twap['price']['mean']:+.2f} & {twap['detection']['mean']:+.2f}\\")
+    return table(r"The decomposition of the policies at nominal $Q/V = 0.4$, against \code{twap\_market} on the same seeds 1020--1039, " + market + r", in basis points with 95\% intervals. A star marks an interval whose $p$-value survives Holm across all policy cells of Table~\ref{tab:e8_rl" + tag + "}.",
+                 "tab:rl_split" + tag, "@{}llllrr@{}", lines)
+
+
+def rl_ceiling_table(summary: dict, market: str = "low-cover market with ten times the capital", tag: str = "") -> str:
+    """What tuned heuristics gain over TWAP on the policies' unseen seeds, and what stealth would be worth under a stronger adversary."""
+    labels = {"hold@0": "post-and-hold at own best", "hold@1": "post-and-hold one tick behind", "signal@+0.5": "momentum TWAP, $k = +0.5$",
+              "signal@-0.5": "momentum TWAP, $k = -0.5$", "signal@+1": "momentum TWAP, $k = +1$", "signal@-1": "momentum TWAP, $k = -1$",
+              "signal@+0.5,1": "momentum TWAP, $k = +0.5$, slower", "signal@-0.5,1": "momentum TWAP, $k = -0.5$, slower"}
+    lines = [r"Executor & $\Delta$ IS, 0.2 & $\Delta$ IS, 0.4 & Pooled & Holm $p$ & Passive & Forced\\\midrule"]
+    for name, r in sorted(summary["ceiling"].items(), key=lambda kv: kv[1]["pooled"]["mean"]):
+        if r["pooled"]["mean"] > 1.0:
+            continue  # front-loaded and aggressive executors lose by basis points; the full list is in the summary
+        lines.append(f"{labels.get(name, code(name))} & {ci(r['by_size']['0.2'])} & {ci(r['by_size']['0.4'])} & {ci(r['pooled'])} & {r['pooled']['p_holm']:.2f} & {r['passive']:.2f} & {r['forced']:.3f}\\\\")
+    lines.append(r"\midrule\multicolumn{7}{@{}l}{\emph{Detection and predation for \code{twap\_market} under a more sensitive adversary, seeds 1020--1039}}\\")
+    lines.append(r"Adversary & Nominal & IS & $v(N) - v(\{I, P\})$ & Reaction & Detector signal & \\")
+    titles = {"medium": "this market (threshold 0.3)", "lenient": "threshold 0.2", "lenient_x3": r"threshold 0.2, response $\times 3$", "lenient_x3_0.6": r"threshold 0.2, response $\times 3$"}
+    for name, r in summary["adversary"].items():
+        d = r["detection_predation"]
+        lines.append(f"{titles[name]} & {r['size']:.1f} & {r['is'][0]:.2f} & {d[0]:+.2f} [{d[1]:+.2f}, {d[2]:+.2f}] & {r['reaction'][0]:+.2f} & {r['firing']:.3f} & \\\\")
+    return table(rf"Top: tuned heuristics against \code{{twap\_market}} on the policies' unseen seeds 1000--1079, {market}, $T = 2000$, in basis points with 95\% intervals; TWAP pays {summary['twap_is']['0.2']:.2f} and {summary['twap_is']['0.4']:.2f} bps. Executors that lose by more than 1 bps are omitted. Bottom: what detection and predation cost TWAP when the makers' detector fires at a lower imbalance and the makers and the anticipator react three times as strongly.",
+                 "tab:rl_ceiling" + tag, "@{}lllllrr@{}", lines)
 
 
 def rl_eval_table(rows: list[dict]) -> str:
-    """The second-generation policies against TWAP: validation seeds, then unseen seeds."""
+    """The policies against TWAP by cell: validation seeds, then unseen seeds."""
     lines = [r"Policy & Market & Nominal & \multicolumn{2}{c}{IS, policy $-$ TWAP} & \multicolumn{2}{c}{Net of drift, policy $-$ TWAP} & \multicolumn{2}{c}{Exposure}\\",
              r" & & & Validation & Unseen & Validation & Unseen & Policy & TWAP\\\midrule"]
     by = {(r["name"], r["regime"], r["size"], r["seeds"]): r for r in rows}
@@ -221,12 +247,12 @@ def rl_eval_table(rows: list[dict]) -> str:
         v, u = by[(name, regime, size, "validation")], by[(name, regime, size, "unseen")]
         gap = lambda r, key: ci({"mean": r[key], "low": r[f"{key}_low"], "high": r[f"{key}_high"]})
         lines.append(f"{code(name)} & {code(regime)} & {size:.2f} & {gap(v, 'gap_is')} & {gap(u, 'gap_is')} & {gap(v, 'gap_net')} & {gap(u, 'gap_net')} & {u['exposure']:.3f} & {u['twap_exposure']:.3f}\\\\")
-    return table(r"The second-generation policies against \code{twap\_market} on the same episodes, greedy, $T = 2000$, in basis points with 95\% intervals. Validation is seeds 800--879, on which the checkpoint was chosen; unseen is seeds 1000--1079, the estimate to quote. Exposure is the mean signal of the makers' detector in the executor's direction.",
+    return table(r"The policies against \code{twap\_market} on the same episodes, by cell, greedy, $T = 2000$, in basis points with 95\% intervals. Validation is seeds 800--879, on which the checkpoint was chosen; unseen is seeds 1000--1079, the estimate to quote. Exposure is the mean signal of the makers' detector in the executor's direction.",
                  "tab:rl_eval", "@{}lllllllrr@{}", lines)
 
 
-def e8_rl_table(run: dict) -> str:
-    """The decomposition of the second-generation policies next to TWAP, low cover with ten times the capital."""
+def e8_rl_table(run: dict, market: str = "low-cover market with ten times the capital", tag: str = "") -> str:
+    """The decomposition of the policies next to TWAP, low cover with ten times the capital."""
     lines = [r"Executor & Nominal & Passive & Mech. & Reaction & Share & $\phi_I$ & $\phi_P$ & $\phi_D$ & $\phi_A$ & $\Delta$ IS & $\Delta$ mech. & $\Delta$ reaction\\\midrule"]
     for key, r in run["summary"]["rows"].items():
         _, strategy, size, _ = key.split("|")
@@ -235,8 +261,8 @@ def e8_rl_table(run: dict) -> str:
         deltas = f"{ci(e['d_is'])} & {ci(e['d_mechanical'])} & {ci(e['d_reaction'])}" if e else " & & "
         lines.append(f"{label} & {float(size):.2f} & {1 - r['aggressive_share']:.2f} & {r['mechanical'][0]:.2f} & {ci(r['reaction'])} & {r['reaction_share'][0]:.2f} & "
                      f"{phi_cells(r)} & {deltas}\\\\")
-    return table(r"The decomposition of the second-generation policies, low-cover market with ten times the capital, $T = 2000$, seeds 1020--1039, in basis points with 95\% intervals. $\Delta$ is against \code{twap\_market} on the same seeds.",
-                 "tab:e8_rl", "@{}lrrrlrrrrrlll@{}", lines)
+    return table(r"The decomposition of the policies, " + market + r", $T = 2000$, seeds 1020--1039, in basis points with 95\% intervals. $\Delta$ is against \code{twap\_market} on the same seeds.",
+                 "tab:e8_rl" + tag, "@{}lrrrlrrrrrlll@{}", lines)
 
 
 def curve_pair_table(low: dict, deep: dict) -> str:
@@ -379,26 +405,6 @@ def figure_exponents(deep_cap: dict, cap_h: dict, tails_all: dict, path: Path) -
     plt.close(fig)
 
 
-def figure_ppo(low: dict, path: Path) -> None:
-    plt = style()
-    sizes = ("0.02", "0.05", "0.1", "0.2", "0.4")
-    fig, axes = plt.subplots(1, 2, figsize=(6.3, 2.4))
-    for ax, field, title in zip(axes, ("d_mechanical", "d_reaction"), ("Change in mechanical cost (bps)", "Change in reaction (bps)")):
-        for i, (name, marker, label) in enumerate(zip(ppo_names(low), ("o", "s"), ("Trained at 0.20", "Trained at 0.40"))):
-            cells = [low["executors"][f"low_cover|{name}|{size}|2000"][field] for size in sizes]
-            mean = np.array([c["mean"] for c in cells])
-            ax.errorbar(np.arange(len(sizes)) + (i - 0.5) * 0.18, mean, yerr=[mean - [c["low"] for c in cells], [c["high"] for c in cells] - mean], color=SERIES[i], marker=marker,
-                        markersize=4, linewidth=0, elinewidth=1.2, capsize=2, label=label)
-        ax.axhline(0, color=MUTED, linewidth=0.8)
-        ax.set_xticks(range(len(sizes)), [f"{float(s):.2f}" for s in sizes])
-        ax.set_xlabel("Nominal $Q/V$")
-        ax.set_title(title)
-    axes[0].legend(loc="upper left")
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--refresh", action="store_true", help="copy summaries from outputs/ and recompute the tails; needs the episode logs")
@@ -414,18 +420,22 @@ def main():
     tables.update(twap=twap_table(runs["deep"], runs["deep_cap"]), executors=executors_table(runs["deep"], runs["deep_cap"], tails_all["deep"], tails_all["deep_cap"]),
                   horizon=horizon_table(runs["horizons"], runs["horizons_cap"], tails_all["horizons"], tails_all["horizons_cap"]),
                   concavity=concavity_table(runs["deep"], runs["deep_cap"], runs["horizons"], runs["horizons_cap"]), runaways=runaways_table(tails_all),
-                  causes=causes_table(load("runaway_causes")["summary"]), routes=routes_table(runs["low"]), ppo=ppo_table(runs["low"]), curve=curve_pair_table(curve, deep_curve))
-    pending = {"rl_eval": lambda: rl_eval_table(load("rl_eval")), "e8_rl": lambda: e8_rl_table(load("e8_rl"))}
-    for name, make in pending.items():
-        tables[name] = make() if (RESULTS / name / "summary.json").exists() else f"% {name}: no results yet; make_paper --refresh picks them up from outputs/decomposition/{name}/"
+                  causes=causes_table(load("runaway_causes")["summary"]), routes=routes_table(runs["low"]), curve=curve_pair_table(curve, deep_curve))
+    tables.update(rl_eval=rl_eval_table(load("rl_eval")), e8_rl=e8_rl_table(load("e8_rl")), rl_split=rl_split_table(load("e8_rl")), rl_ceiling=rl_ceiling_table(load("rl_ceiling")),
+                  rl_pooled=rl_pooled_table(json.loads((RESULTS / "rl_eval" / "analysis.json").read_text())))
+    lt = "large-tick market (low cover, ten times the capital, a spread of about five ticks)"
+    large_tick = {"rl_pooled_lt": lambda: rl_pooled_table(json.loads((RESULTS / "rl_eval_large_tick" / "analysis.json").read_text()), lt, "_lt"),
+                  "e8_rl_lt": lambda: e8_rl_table(load("e8_rl_large_tick"), lt, "_lt"), "rl_split_lt": lambda: rl_split_table(load("e8_rl_large_tick"), lt, "_lt"),
+                  "rl_ceiling_lt": lambda: rl_ceiling_table(load("rl_ceiling_large_tick"), lt, "_lt")}
+    for name, make in large_tick.items():
+        tables[name] = make() if all((RESULTS / n / "summary.json").exists() for n in LARGE_TICK) else f"% {name}: the large-tick run is not back yet; make_paper --refresh picks it up from outputs/decomposition/"
     for name, text in tables.items():
         (GENERATED / f"{name}.tex").write_text(re.sub(r"[ \t]+\n", "\n", text) + "\n")
     figure_decomposition(runs["deep"], runs["deep_cap"], GENERATED / "decomposition.pdf")
     figure_horizon(runs["horizons_cap"], GENERATED / "horizon.pdf")
     figure_tails(tails_all, GENERATED / "tails.pdf")
     figure_exponents(runs["deep_cap"], runs["horizons_cap"], tails_all, GENERATED / "exponents.pdf")
-    figure_ppo(runs["low"], GENERATED / "ppo.pdf")
-    print(f"wrote {len(tables)} tables and 5 figures to {GENERATED}")
+    print(f"wrote {len(tables)} tables and 4 figures to {GENERATED}")
 
 
 if __name__ == "__main__":

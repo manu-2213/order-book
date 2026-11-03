@@ -8,7 +8,7 @@
 #SBATCH --mem-per-cpu=1G
 #SBATCH -t 1:0:0
 #SBATCH --mail-type=END,FAIL
-# Every trained policy against TWAP on the validation seeds and on 80 unseen seeds, paired, in the paired worlds. After the rl chain.
+# Every trained policy against TWAP on the validation seeds and on 80 unseen seeds, paired, in the paired worlds, and the per-seed analysis. After the rl chain.
 set -eo pipefail
 cd "$SLURM_SUBMIT_DIR/../../.."
 source hpc/env.sh

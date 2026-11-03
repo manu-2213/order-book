@@ -197,6 +197,18 @@ class OrderBook:
         order = self._orders.get(self._integer(order_id, "order_id"))
         return order.view() if order else None
 
+    def queue_ahead(self, order_id: int) -> int:
+        """Volume resting ahead of ``order_id`` at its price: its place in the queue."""
+        order = self._orders.get(self._integer(order_id, "order_id"))
+        if order is None:
+            return 0
+        ahead = 0
+        for other in self._queues[order.side][order.price].values():
+            if other is order:
+                return ahead
+            ahead += other.quantity
+        return ahead
+
     def get_client_orders(self, client_id: int) -> list[OrderView]:
         ids = self._client_orders.get(self._integer(client_id, "client_id"), ())
         return [self._orders[i].view() for i in ids]

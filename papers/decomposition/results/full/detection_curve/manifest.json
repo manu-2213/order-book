@@ -1,7 +1,7 @@
 [
  {
-  "simulator_version": "1",
-  "commit": "2ff729439a8027cb819f9d16c93839b34aa571a4",
+  "simulator_version": "2",
+  "commit": "f9c3baf2bd62d1f5dd3dbb98fcdf9ec78ed8e065",
   "dirty": false,
   "origin": ".source_version",
   "resumed": false,
@@ -17,9 +17,9 @@
    "--workers",
    "8"
   ],
-  "time_utc": "2026-11-02T16:46:34+00:00",
-  "host": "ddy92",
-  "slurm_job_id": "35081803",
+  "time_utc": "2026-11-03T09:23:14+00:00",
+  "host": "ddy163",
+  "slurm_job_id": "35233107",
   "python": "3.11.7",
   "numpy": "2.4.6",
   "config": {
@@ -92,7 +92,8 @@
     "liquidity": 1.0,
     "institutions": 1,
     "makers": 4,
-    "mm_size_scale": 1.0
+    "mm_size_scale": 1.0,
+    "capital": 1
    },
    "horizon": 2000,
    "decision_interval": 5,

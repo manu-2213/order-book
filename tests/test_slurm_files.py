@@ -57,7 +57,7 @@ def command(job: Path) -> str:
 
 def test_the_grids_are_split_into_arrays():
     assert {job.stem for job in GRIDS} >= {"e8_deep_cover", "e8_low_cover", "e8_horizons", "protocol", "detection_curve", "replications", "e8_rl"}
-    assert {job.stem for job in SWEEPS} == {"train_rl"}
+    assert {job.stem for job in SWEEPS} == {"train_rl", "train_rl_large_tick"}
 
 
 def test_submit_chains_a_job_on_itself_when_asked():

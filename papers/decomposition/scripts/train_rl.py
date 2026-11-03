@@ -8,7 +8,8 @@ draw a seed below 800 and a size and market from the lists given; the checkpoint
 against TWAP on the same episodes; seeds from 1000 up are never used here.
 
     python -m papers.decomposition.scripts.train_rl --name ppo --workers 8
-    python -m papers.decomposition.scripts.train_rl --sweep 3 --workers 16 --resume --hours 0.9    # one row of SWEEP, as the cluster runs it
+    python -m papers.decomposition.scripts.train_rl --sweep 3 --workers 16 --resume --hours 0.9    # one row of the base sweep, as the cluster runs it
+    python -m papers.decomposition.scripts.train_rl --sweep-set large_tick --sweep 2 --workers 16 --resume --hours 0.9
     python -m papers.decomposition.scripts.train_rl --quick
 
 A run stopped by ``--hours`` leaves outputs/decomposition/rl/<name>/checkpoint.pt and resumes with ``--resume``; the chained
@@ -19,15 +20,16 @@ import argparse
 from dataclasses import replace
 
 from order_book.execution.ppo import PPOConfig
-from order_book.experiments import CAPITAL_REGIMES
+from order_book.experiments import CAPITAL_REGIMES, LARGE_TICK_REGIMES
 from order_book.provenance import write_manifest
 from order_book.training import PairedExecutionEnv, PairedTrainer, RewardSpec, TRAIN_SEEDS, TrainingConfig, config_summary
 from papers.decomposition import OUT
 from scripts._common import write_json
 
-# The cluster's sweep: one row per array task. Everything not named here is the default below.
+# The cluster's sweeps: one row per array task of the job named after the set. Everything not named here is the default below.
 BOTH = ("low_cover_capital10", "deep_cover_capital10")
-SWEEP = (
+LARGE = ("low_cover_large_tick",)
+BASE_SWEEP = (
     dict(name="ppo"),                                                   # the main agents: shortfall, in the low-cover market
     dict(name="grpo", method="grpo"),
     dict(name="ppo_net", reward="net"),                                 # the ablation: cost net of drift, which does not charge timing
@@ -39,13 +41,26 @@ SWEEP = (
     dict(name="grpo_seed1", method="grpo", seed=1),
     dict(name="grpo_g8", method="grpo", group_size=8),                  # larger groups, fewer seeds per update
 )
-REGIMES = {r.name: r for r in CAPITAL_REGIMES}
+LARGE_TICK_SWEEP = (                                                    # the market with a margin: a spread of about five ticks
+    dict(name="lt_ppo", regimes=LARGE),
+    dict(name="lt_grpo", method="grpo", regimes=LARGE),
+    dict(name="lt_ppo_seed1", regimes=LARGE, seed=1),
+    dict(name="lt_grpo_seed1", method="grpo", regimes=LARGE, seed=1),
+    dict(name="lt_grpo_detect0.03", method="grpo", regimes=LARGE, detection_penalty=0.03),
+    dict(name="lt_grpo_mixed", method="grpo", regimes=("low_cover_capital10", "low_cover_large_tick")),  # across both markets
+)
+SWEEPS = {"base": BASE_SWEEP, "large_tick": LARGE_TICK_SWEEP}
+SWEEP_MARKET = {"base": "low_cover_capital10", "large_tick": "low_cover_large_tick"}   # where a set's policies are compared
+REGIMES = {r.name: r for r in CAPITAL_REGIMES + LARGE_TICK_REGIMES}
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", default="ppo", help="run name under outputs/decomposition/rl/")
-    parser.add_argument("--sweep", type=int, default=None, help="take the settings of this row of SWEEP (1-based, a Slurm array task id)")
+    parser.add_argument("--sweep", type=int, default=None, help="take the settings of this row of the sweep set (1-based, a Slurm array task id)")
+    parser.add_argument("--sweep-set", default="base", choices=sorted(SWEEPS))
+    parser.add_argument("--gamma", type=float, default=1.0, help="no discount: an execution episode is one cost")
+    parser.add_argument("--gae-lambda", type=float, default=0.97)
     parser.add_argument("--method", default="ppo", choices=("ppo", "grpo"))
     parser.add_argument("--group-size", type=int, default=4, help="grpo: episodes sharing one seed, size and market")
     parser.add_argument("--regimes", nargs="+", default=("low_cover_capital10",), choices=sorted(REGIMES))
@@ -71,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def settings(args) -> argparse.Namespace:
     if args.sweep is not None:
-        row = dict(SWEEP[args.sweep - 1])
+        row = dict(SWEEPS[args.sweep_set][args.sweep - 1])
         args.name = row.pop("name")
         for key, value in row.items():
             setattr(args, key, value)
@@ -87,7 +102,7 @@ def main(argv=None):
                              reward=RewardSpec(args.reward, args.detection_penalty, args.impact_penalty), horizon=args.horizon,
                              burn_in=400 if args.quick else 2_000)
     ppo = PPOConfig(iterations=args.iterations, episodes_per_update=args.episodes, epochs=args.epochs, minibatch=args.minibatch, lr=args.lr,
-                    entropy_coef=args.entropy, seed=args.seed, train_seeds=TRAIN_SEEDS)
+                    entropy_coef=args.entropy, gamma=args.gamma, gae_lambda=args.gae_lambda, seed=args.seed, train_seeds=TRAIN_SEEDS)
     training = TrainingConfig(ppo=ppo, method=args.method, group_size=args.group_size, eval_every=args.eval_every)
     if args.quick:
         training = replace(training, validation_seeds=(800, 801))

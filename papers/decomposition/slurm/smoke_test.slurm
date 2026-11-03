@@ -32,6 +32,7 @@ python -u -m papers.decomposition.scripts.crn_variance --quick --workers $SLURM_
 python -u -m papers.decomposition.scripts.replications --quick --workers $SLURM_NTASKS > /dev/null
 python -u -m papers.decomposition.scripts.runaway_causes --quick --workers $SLURM_NTASKS > /dev/null
 python -u -m papers.decomposition.scripts.market_probe --quick --workers $SLURM_NTASKS > /dev/null
+python -u -m papers.decomposition.scripts.rl_ceiling --quick --workers $SLURM_NTASKS > /dev/null
 # The training path: a few iterations, a checkpoint, then the evaluation of what it saved.
 python -u -m papers.decomposition.scripts.train_rl --quick --name smoke --workers $SLURM_NTASKS > /dev/null
 python -u -m papers.decomposition.scripts.rl_eval --quick --policies outputs/decomposition/rl_quick/smoke/best_policy.pt --workers $SLURM_NTASKS > /dev/null

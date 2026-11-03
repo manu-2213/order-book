@@ -1,70 +1,70 @@
 [
  {
-  "policy": "outputs/rl/sweep/lr1e-3_ent0.003_ep4_sz0.20/policy.pt",
+  "policy": "outputs/stealth_execution/rl/sweep/lr1e-3_ent0.003_ep4_sz0.20/policy.pt",
   "size": 0.2,
   "seeds": "selected",
   "n": 40,
-  "twap": 2.822416838603878,
-  "ppo": 2.403695598157598,
+  "twap": 3.3616655104797344,
+  "ppo": 3.2304024173494916,
   "ppo_minus_twap": {
-   "mean": -0.41872124044628,
-   "low": -0.9627799902860515,
-   "high": 0.13976507019639103,
-   "p_greater": 0.9295,
-   "p_two_sided": 0.141,
+   "mean": -0.13126309313024262,
+   "low": -0.5374057173966489,
+   "high": 0.26731732773556566,
+   "p_greater": 0.74,
+   "p_two_sided": 0.52,
    "n": 40
   },
-  "completion": 0.9815703118336507
+  "completion": 0.9635075871071956
  },
  {
-  "policy": "outputs/rl/sweep/lr1e-3_ent0.003_ep4_sz0.20/policy.pt",
+  "policy": "outputs/stealth_execution/rl/sweep/lr1e-3_ent0.003_ep4_sz0.20/policy.pt",
   "size": 0.2,
   "seeds": "unseen",
   "n": 80,
-  "twap": 2.347483485996683,
-  "ppo": 2.7344615669514,
+  "twap": 3.7597606286113328,
+  "ppo": 4.342135813920161,
   "ppo_minus_twap": {
-   "mean": 0.38697808095471703,
-   "low": 0.026567304069833854,
-   "high": 0.7616436978283571,
-   "p_greater": 0.018,
-   "p_two_sided": 0.036,
+   "mean": 0.5823751853088284,
+   "low": 0.2738975588007073,
+   "high": 0.9145580541607925,
+   "p_greater": 0.0,
+   "p_two_sided": 0.0,
    "n": 80
   },
-  "completion": 0.9649781083896716
+  "completion": 0.9301500017357703
  },
  {
-  "policy": "outputs/rl/sweep/lr1e-3_ent0.01_ep10_sz0.40/best_policy.pt",
+  "policy": "outputs/stealth_execution/rl/sweep/lr1e-3_ent0.01_ep10_sz0.40/best_policy.pt",
   "size": 0.4,
   "seeds": "selected",
   "n": 40,
-  "twap": 5.12280149717183,
-  "ppo": 4.693497134216412,
+  "twap": 6.300622324641292,
+  "ppo": 7.626150119044519,
   "ppo_minus_twap": {
-   "mean": -0.4293043629554184,
-   "low": -0.7697461175427683,
-   "high": -0.09655105188122651,
-   "p_greater": 0.994,
-   "p_two_sided": 0.012,
+   "mean": 1.3255277944032264,
+   "low": -0.41640543187670687,
+   "high": 3.5754939291342005,
+   "p_greater": 0.0915,
+   "p_two_sided": 0.183,
    "n": 40
   },
-  "completion": 0.9898419806195984
+  "completion": 0.9648729394306713
  },
  {
-  "policy": "outputs/rl/sweep/lr1e-3_ent0.01_ep10_sz0.40/best_policy.pt",
+  "policy": "outputs/stealth_execution/rl/sweep/lr1e-3_ent0.01_ep10_sz0.40/best_policy.pt",
   "size": 0.4,
   "seeds": "unseen",
   "n": 80,
-  "twap": 4.685808764054846,
-  "ppo": 4.896978112236788,
+  "twap": 6.675907988849822,
+  "ppo": 11.571390026479559,
   "ppo_minus_twap": {
-   "mean": 0.21116934818194152,
-   "low": -0.002636200471983474,
-   "high": 0.4388084332394442,
-   "p_greater": 0.026,
-   "p_two_sided": 0.052,
+   "mean": 4.895482037629736,
+   "low": 1.7788095697975055,
+   "high": 8.760426641449284,
+   "p_greater": 0.0,
+   "p_two_sided": 0.0,
    "n": 80
   },
-  "completion": 0.9901179043603054
+  "completion": 0.9541914598592316
  }
 ]

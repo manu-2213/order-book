@@ -29,6 +29,7 @@ class PublicState:
         self.last: int | None = None
         self.best_bid = self.best_ask = None
         self.spread = 0
+        self.bid_depth = self.ask_depth = 0  # lots at the best quotes
         self.ma_slow = float(mid)
         self.var_fast = self.var_slow = 1.0  # ticks^2 per step
         self.volume_fast = self.volume_slow = 0.0
@@ -61,6 +62,8 @@ class PublicState:
         self.step_trades = step_trades if step_trades is not None else []
         bid, ask = book.best_bid, book.best_ask
         self.best_bid, self.best_ask = bid, ask
+        self.bid_depth = book.get_volume_at_price("bid", bid) if bid is not None else 0
+        self.ask_depth = book.get_volume_at_price("ask", ask) if ask is not None else 0
         if bid is not None and ask is not None:
             mid, self.spread = (bid + ask) / 2, ask - bid
         else:

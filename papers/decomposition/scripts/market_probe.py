@@ -29,14 +29,19 @@ BASE = RegimeSpec("deep_cover", 1.0, 4).base()
 VARIANTS = {"base": {}, "capital10": dict(capital=10), "deep5": dict(deep=5), "window100": dict(levels=100), "sigma1": dict(sigma=1.0), "sigma3": dict(sigma=3.0),
             "kappa0.25": dict(kappa=0.25), "offset10": dict(offset=10.0), "cap10_deep5": dict(capital=10, deep=5), "cap10_sig1": dict(capital=10, sigma=1.0),
             "cap10_win100": dict(capital=10, levels=100), "cap10_deep5_win100_sig1": dict(capital=10, deep=5, levels=100, sigma=1.0),
-            "cap10_deep5_win100_sig3_off10": dict(capital=10, deep=5, levels=100, sigma=3.0, offset=10.0)}
+            "cap10_deep5_win100_sig3_off10": dict(capital=10, deep=5, levels=100, sigma=3.0, offset=10.0),
+            "large_tick": dict(capital=10, half=3.0, improve=False)}  # the market the learned executor has a margin in
 ORDERS = (("twap_market", 0.2, 2000), ("twap_market", 0.4, 2000), ("twap_market", 0.4, 8000), ("immediate", 0.4, 2000), ("pov", 0.4, 2000))
 HORIZONS = (1, 10, 60, 600, 2000, 8000)
 BURN_IN, WINDOW, SAMPLE_EVERY = 2_000, 12_000, 25
 
 
-def market(capital=1, deep=1, levels=None, sigma=None, kappa=None, offset=None):
+def market(capital=1, deep=1, levels=None, sigma=None, kappa=None, offset=None, half=None, improve=True):
     cfg = BASE
+    if half is not None or not improve:
+        makers = tuple(replace(m, min_half_spread=half if half is not None else m.min_half_spread) for m in cfg.population.market_makers)
+        cfg = replace(cfg, population=replace(cfg.population, market_makers=makers), noise=replace(cfg.noise, improve=improve),
+                      speculators=replace(cfg.speculators, improve=improve))
     if capital != 1:
         cfg = replace(cfg, endowment=replace(cfg.endowment, speculator=cfg.endowment.speculator * capital, noise=cfg.endowment.noise * capital))
     if deep != 1 or kappa is not None:

@@ -63,6 +63,7 @@ class NoiseFlowConfig:
     cross_frac: float = 0.05      # share sent as marketable limits at the opposite best
     balance_weight: float = 0.5   # tilt of the bid probability toward the pool's cash share
     stp_mode: str = "none"        # the pool stands for many traders in one account, so its orders trade against its own
+    improve: bool = True          # passive limits rest behind the opposite best (may sit inside the spread); False: behind own best
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ class SpeculatorConfig:
     obs_noise: float = 1.0        # sd of fresh observation noise on the hidden value (ticks)
     threshold: float = 2.0        # fundamentalist: minimum |belief - mid| to trade
     aggressive_gap: float = 8.0   # fundamentalist: gap at which a market order is used
+    improve: bool = True          # fundamentalist limits may rest inside the spread; False: at own side's best or behind
     max_qty: int = 20             # fundamentalist: maximum order size
     max_position: int | None = None  # absolute position cap; None means the share endowment
     chart_threshold: float = 6.0  # chartist: minimum |momentum| to enter (3 gives trending returns; see docs)
@@ -123,6 +125,7 @@ class MarketMakerConfig:
     horizon: int = 50             # steps of inventory risk priced into the quotes
     min_var: float = 0.25         # floor on the fast variance (ticks^2 / step)
     max_skew: float = 10.0        # cap on both the inventory skew and the half-spread (ticks)
+    min_half_spread: float = 1.0  # floor on the quoted half-spread (ticks)
     size: tuple[int, int] = (5, 20)          # uniform quote size range
     refill_frac: float = 0.5      # requote a side once its size falls below this share of target
     max_inventory: int = 200      # pull the side that would push inventory past this

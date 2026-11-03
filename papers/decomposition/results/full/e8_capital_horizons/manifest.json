@@ -1,7 +1,7 @@
 [
  {
-  "simulator_version": "1",
-  "commit": "ffe8688712080aee7381d337421776fda468224d",
+  "simulator_version": "2",
+  "commit": "f9c3baf2bd62d1f5dd3dbb98fcdf9ec78ed8e065",
   "dirty": false,
   "origin": ".source_version",
   "resumed": false,
@@ -33,9 +33,9 @@
    "--workers",
    "8"
   ],
-  "time_utc": "2026-11-02T18:35:06+00:00",
-  "host": "ehc3",
-  "slurm_job_id": "35102774",
+  "time_utc": "2026-11-03T09:28:29+00:00",
+  "host": "ddy61",
+  "slurm_job_id": "35233119",
   "python": "3.11.7",
   "numpy": "2.4.6",
   "config": {

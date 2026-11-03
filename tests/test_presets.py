@@ -60,3 +60,18 @@ def test_private_valuations_compose_with_a_regime():
     cfg = private_valuations(base=regime(liquidity=0.5, institutions=2))
     assert cfg.fundamental.private and cfg.population.institutions == 2
     assert cfg.noise.rate == pytest.approx(SimConfig().noise.rate * 0.5)
+
+
+def test_a_large_tick_regime_holds_its_spread_open():
+    from order_book.experiments import LARGE_TICK_REGIMES
+    cfg = LARGE_TICK_REGIMES[0].base()
+    assert cfg.noise.improve is False and cfg.speculators.improve is False and all(m.min_half_spread == 3.0 for m in cfg.population.market_makers)
+    assert cfg.endowment.speculator == 10 * SimConfig().endowment.speculator
+    sim = Simulator(seed=2, config=cfg, analysis=False)
+    sim.run(1500)
+    spreads = []
+    for _ in range(500):
+        sim.step()
+        spreads.append(sim.market.public.spread)
+    assert 3 < sum(spreads) / len(spreads) < 9
+    assert sim.market.public.bid_depth == sim.book.get_volume_at_price("bid", sim.book.best_bid)

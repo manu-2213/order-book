@@ -110,3 +110,16 @@ def test_phase3_config_has_single_institution_and_detecting_makers():
     cfg = phase3_config(institutions=1)
     assert cfg.population.institutions == 1
     assert sum(1 for m in cfg.population.market_makers if m.detector) == 2
+
+
+def test_actions_and_features_only_grew_by_appending():
+    assert ACTIONS[:15] == tuple((m, p) for m in (0.0, 0.5, 1.0, 1.5, 2.5) for p in ("market", "passive_best", "passive_behind"))
+    assert ACTIONS[15:] == tuple((m, "improve") for m in (0.0, 0.5, 1.0, 1.5, 2.5)) and N_ACTIONS == 20
+    s = fake_state()
+    s.best_bid, s.best_ask, s.spread = 9_995, 10_000, 5
+    assert decision(15, s) == Decision() and decision(17, s).limit_price == 9_996  # improve by a tick inside a wide spread
+    s.best_ask, s.spread = 9_996, 1
+    assert decision(17, s).limit_price == 9_995  # no room: join own best
+    s.own_best_depth, s.opposite_best_depth, s.own_queue_ahead = 25, 100, 10
+    vec = features(s)
+    assert vec.shape == (19,) and tuple(vec[14:17]) == (0.5, 2.0, 0.2) and abs(vec[17]) <= 3 and abs(vec[18]) <= 3

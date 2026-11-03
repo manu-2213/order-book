@@ -68,6 +68,9 @@ class ExecState:
     expected_volume_per_step: float
     own_flow_share: float                # own aggressive volume / all aggressive volume in the public window
     public: object                       # the PublicState itself, for anything else public
+    own_best_depth: int = 0              # lots at the best quote on the executor's side
+    opposite_best_depth: int = 0         # lots at the best quote it would take
+    own_queue_ahead: int = 0             # lots resting ahead of the executor's own orders at their prices
 
     @property
     def sign(self) -> int:
@@ -85,6 +88,15 @@ class ExecState:
     def behind(self, ticks: int) -> int:
         """Price ``ticks`` behind own best (less aggressive)."""
         return self.own_best() - ticks if self.side == "bid" else self.own_best() + ticks
+
+    def inside(self, ticks: int) -> int:
+        """Price ``ticks`` inside own best, never crossing: with no room it is own best."""
+        opposite = self.opposite_best()
+        if self.side == "bid":
+            price = self.own_best() + ticks
+            return min(price, opposite - 1) if opposite is not None else price
+        price = self.own_best() - ticks
+        return max(price, opposite + 1) if opposite is not None else price
 
 
 class Strategy:
@@ -185,6 +197,9 @@ class ExecutorAgent(Agent):
             own_resting=sum(o["quantity"] for o in resting), own_resting_orders=resting,
             expected_volume_per_step=self.expected_volume,
             own_flow_share=min(1.0, own_window / window_flow) if window_flow else 0.0, public=ps,
+            own_best_depth=ps.bid_depth if task.side == "bid" else ps.ask_depth,
+            opposite_best_depth=ps.ask_depth if task.side == "bid" else ps.bid_depth,
+            own_queue_ahead=sum(m.book.queue_ahead(o["order_id"]) for o in resting),
         )
 
     # ----- stepping -------------------------------------------------------- #

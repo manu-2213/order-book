@@ -187,3 +187,47 @@ def test_adversary_presets():
     with pytest.raises(ValueError):
         adversary("A2")
     assert market_makers(3, 3)[2].detector == "flow"
+
+
+def test_noise_orders_that_do_not_improve_never_rest_inside_the_spread():
+    from dataclasses import replace
+    cfg = replace(SimConfig(), noise=replace(SimConfig().noise, improve=False))
+    sim = Simulator(seed=3, config=cfg, analysis=False)
+    noise = next(a for a in sim.agents if type(a).__name__ == "NoiseFlow")
+    for _ in range(300):
+        bid, ask = sim.book.best_bid, sim.book.best_ask
+        sim.step()
+        for order in sim.book.get_client_orders(noise.cid):
+            if order["side"] == "bid" and bid is not None:
+                assert order["price"] <= max(bid, sim.book.best_bid or bid)
+            if order["side"] == "ask" and ask is not None:
+                assert order["price"] >= min(ask, sim.book.best_ask or ask)
+
+
+def test_the_makers_half_spread_floor_is_a_parameter():
+    from dataclasses import replace
+    from order_book.config import market_makers
+    base = SimConfig()
+    wide = replace(base, population=replace(base.population, market_makers=market_makers(4, detecting=0, base=replace(base.population.market_makers[0], min_half_spread=3.0))))
+    narrow, broad = Simulator(seed=1, config=base, analysis=False), Simulator(seed=1, config=wide, analysis=False)
+    narrow.run(500), broad.run(500)
+    spread = lambda sim: [o["price"] for a in sim.agents[:4] for o in sim.book.get_client_orders(a.cid) if o["side"] == "ask"]
+    makers_ask = lambda sim: min(spread(sim)) if spread(sim) else None
+    assert makers_ask(broad) is not None and makers_ask(broad) - broad.market.public.mid >= 2.5
+    assert makers_ask(narrow) - narrow.market.public.mid < 2.5
+
+
+def test_fundamentalists_that_do_not_improve_join_their_own_sides_best():
+    from dataclasses import replace
+    cfg = replace(SimConfig(), speculators=replace(SimConfig().speculators, improve=False))
+    sim = Simulator(seed=5, config=cfg, analysis=False)
+    pool = next(a for a in sim.agents if type(a).__name__ == "Speculators")
+    for _ in range(400):
+        bid, ask = sim.book.best_bid, sim.book.best_ask
+        sim.step()
+        for cid in pool.cids:
+            for order in sim.book.get_client_orders(cid):
+                if order["side"] == "bid" and bid is not None:
+                    assert order["price"] <= max(bid, sim.book.best_bid or bid)
+                if order["side"] == "ask" and ask is not None:
+                    assert order["price"] >= min(ask, sim.book.best_ask or ask)

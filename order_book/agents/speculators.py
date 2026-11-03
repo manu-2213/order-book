@@ -93,13 +93,15 @@ class Speculators:
             if abs(gap) >= cfg.aggressive_gap:
                 m.market(cid, side, quantity)
             elif side == "bid":
-                ask = m.book.best_ask
+                ask, bid = m.book.best_ask, m.book.best_bid
                 price = math.floor(belief - cfg.threshold)
-                m.limit(cid, side, min(price, ask - 1) if ask is not None else price, quantity)
+                cap = (ask - 1 if ask is not None else price) if cfg.improve else (bid if bid is not None else (ask - 1 if ask is not None else price))
+                m.limit(cid, side, min(price, cap), quantity)
             else:
-                bid = m.book.best_bid
+                bid, ask = m.book.best_bid, m.book.best_ask
                 price = math.ceil(belief + cfg.threshold)
-                m.limit(cid, side, max(price, bid + 1) if bid is not None else price, quantity)
+                floor_ = (bid + 1 if bid is not None else price) if cfg.improve else (ask if ask is not None else (bid + 1 if bid is not None else price))
+                m.limit(cid, side, max(price, floor_), quantity)
             return
         signal = (self.momentum_public or m.public).momentum[self.lookback[i]]
         if position and (position * signal < 0 or abs(signal) < 0.25 * cfg.chart_threshold):

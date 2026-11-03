@@ -75,6 +75,8 @@ zero dials is `twap_market`, `passive=1` alone is `twap_passive`).
 | Training the executor in the paired worlds | `order_book/training.py` | `train_rl` | `rl/<name>/` |
 | The policies against TWAP on unseen seeds | `order_book/training.py` | `rl_eval` | `rl_eval/` |
 | Their decomposition | `decomposition.py` | `decompose --out e8_rl` (job `e8_rl`) | `e8_rl/` |
+| The margin over TWAP open to tuned heuristics, and stealth under a stronger adversary | `scripts/rl_ceiling.py` | `rl_ceiling` | `rl_ceiling/` |
+| The same three in the large-tick market (`LARGE_TICK_REGIMES`): a spread of about five ticks, where passive placement pays | as above with `--sweep-set large_tick` / `--regime low_cover_large_tick` | `train_rl_large_tick`, `rl_eval_large_tick`, `e8_rl_large_tick`, `rl_ceiling_large_tick` | `rl/lt_*/`, `*_large_tick/` |
 | The market with no executor, and how configs move it (exploratory; nothing reads it) | | `market_probe` | `market_probe/` |
 
 ## Pilot results
@@ -113,13 +115,13 @@ prevention, so their numbers are not comparable. `submit_all.sh final` reruns ev
 
 `train_rl` trains the executor inside `PairedRun`, in the market with ten times the capital. The reward is the shortfall minus a uniform schedule's drift
 along the reference world's mid: the reference never reacts to the executor, so that term is a control variate the policy cannot move, the objective stays
-exactly the shortfall, and the episode's noise falls from about 5.7 to about 2.2 bps. (`--reward net`, each fill against the reference mid at that step,
+exactly the shortfall, and the episode's noise falls from about 7.3 to about 2.7 bps. (`--reward net`, each fill against the reference mid at that step,
 removes the drift entirely but stops charging the drift an adaptive schedule pays: the first cluster run used it and its policies saved on the spread and
 lost it on timing; it stays as the ablation.) `--detection-penalty` charges time spent under the makers' flow detector and `--impact-penalty` weights the
 price's displacement. `--method` is PPO with GAE and a critic, or GRPO: no critic, groups of episodes sharing one seed, size and market and differing only in
 the policy's sampling, each scored against its group's mean, so drift cancels inside the group exactly. Episodes draw a seed below 800 and a size from
 `--sizes` (and a market from `--regimes`); the checkpoint is chosen greedily on seeds 800-879 against TWAP on the same episodes; seeds from 1000 up are never
-used: `rl_eval` scores the policies on 1000-1079 and `e8_rl` decomposes them on 1020-1039. `SWEEP` in the script lists the ten variants the cluster trains
+used: `rl_eval` scores the policies on 1000-1079, with a per-seed analysis in `analysis.json`, and `e8_rl` decomposes them on 1020-1039. `SWEEPS` in the script lists the ten variants the cluster trains in the main market and the six of the large-tick market
 (PPO and GRPO plain, with a detection penalty, across both markets and with a second seed; the net-of-drift ablation; GRPO with groups of 8); each is a chain
 of resumable 1-hour jobs, and `submit_all.sh rl` queues `rl_eval` and `e8_rl` behind the chain. The first-generation policies of `papers/stealth_execution`
 remain as inputs for the low-cover grid.

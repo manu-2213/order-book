@@ -18,13 +18,13 @@ from papers.decomposition.decomposition import (
     DecompositionConfig, compare_executors, format_concavity, format_controls, format_decomposition, format_executors,
     merge_grid, run_grid, run_shard, summarise_concavity, summarise_decomposition,
 )
-from order_book.experiments import CAPITAL_REGIMES, DEFAULT_REGIMES
+from order_book.experiments import CAPITAL_REGIMES, DEFAULT_REGIMES, LARGE_TICK_REGIMES
 from order_book.provenance import write_manifest
 from order_book.runner import shard_dir
 from papers.decomposition import OUT
 from scripts._common import calibration_or_default, write_json
 
-REGIMES = DEFAULT_REGIMES + CAPITAL_REGIMES
+REGIMES = DEFAULT_REGIMES + CAPITAL_REGIMES + LARGE_TICK_REGIMES
 
 
 def main():

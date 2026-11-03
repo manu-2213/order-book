@@ -229,10 +229,13 @@ class RegimeSpec:
     makers: int = 4
     mm_size_scale: float = 1.0      # thins the book independently of ``liquidity``
     capital: int = 1                # scales what speculators and the noise pool hold
+    min_half_spread: float = 1.0    # makers' half-spread floor in ticks; with ``improve`` off it sets the spread
+    improve: bool = True            # False: noise and fundamentalists join their own side's queue, never inside the spread
 
     def base(self) -> SimConfig:
         from order_book.presets import regime
-        return regime(self.liquidity, self.institutions, self.makers, self.mm_size_scale, capital=self.capital)
+        return regime(self.liquidity, self.institutions, self.makers, self.mm_size_scale, capital=self.capital,
+                      min_half_spread=self.min_half_spread, improve=self.improve)
 
 
 DEFAULT_REGIMES = (
@@ -247,3 +250,5 @@ DEFAULT_REGIMES = (
 # Ten times the capital for speculators and the noise pool. Long metaorders exhaust the default market's capital and the
 # price runs away; these are the robustness market of the decomposition and the market the executor is trained in.
 CAPITAL_REGIMES = (RegimeSpec("deep_cover_capital10", 1.0, 4, capital=10), RegimeSpec("low_cover_capital10", 1.0, 1, capital=10))
+# A large-tick stock: the spread is several ticks because nobody improves inside the makers' quotes, so passive placement pays.
+LARGE_TICK_REGIMES = (RegimeSpec("low_cover_large_tick", 1.0, 1, capital=10, min_half_spread=3.0, improve=False),)

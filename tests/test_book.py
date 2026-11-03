@@ -279,3 +279,15 @@ def test_deterministic_random_sequences_preserve_invariants(book):
         else:
             continue
         assert_book_invariants(book)
+
+
+def test_queue_ahead_counts_what_rests_before_an_order_at_its_price():
+    from order_book.book import OrderBook
+    book = OrderBook(20, 10_000, 10)
+    first = book.limit("bid", 1, 9_999, 7)["order_id"]
+    second = book.limit("bid", 2, 9_999, 5)["order_id"]
+    assert book.queue_ahead(first) == 0 and book.queue_ahead(second) == 7
+    book.market("ask", 3, 4)  # takes 4 of the first order
+    assert book.queue_ahead(second) == 3
+    book.cancel_order(first, 1)
+    assert book.queue_ahead(second) == 0 and book.queue_ahead(first) == 0

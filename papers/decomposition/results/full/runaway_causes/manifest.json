@@ -1,18 +1,18 @@
 [
  {
-  "simulator_version": "1",
-  "commit": "ffe8688712080aee7381d337421776fda468224d",
-  "dirty": true,
-  "origin": "git",
+  "simulator_version": "2",
+  "commit": "f9c3baf2bd62d1f5dd3dbb98fcdf9ec78ed8e065",
+  "dirty": false,
+  "origin": ".source_version",
   "resumed": false,
   "argv": [
-   "/Users/manu13/Desktop/PHD/order-book/papers/decomposition/scripts/runaway_causes.py",
+   "/data/home/acw796/order-book/papers/decomposition/scripts/runaway_causes.py",
    "--workers",
-   "7"
+   "16"
   ],
-  "time_utc": "2026-11-02T18:45:09+00:00",
-  "host": "Manuels-MacBook-Air.local",
-  "slurm_job_id": null,
+  "time_utc": "2026-11-03T09:21:57+00:00",
+  "host": "ddy176",
+  "slurm_job_id": "35233120",
   "python": "3.11.7",
   "numpy": "2.4.6",
   "config": {

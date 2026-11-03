@@ -35,7 +35,7 @@ def adversary(level: str, threshold: str = "medium", base: SimConfig | None = No
 
 
 def regime(liquidity: float = 1.0, institutions: int = 4, makers: int = 4, mm_size_scale: float = 1.0,
-           base: SimConfig | None = None, capital: int = 1) -> SimConfig:
+           base: SimConfig | None = None, capital: int = 1, min_half_spread: float = 1.0, improve: bool = True) -> SimConfig:
     """A market of a given liquidity and institutional cover, before detection is wired in (plan E7).
 
     ``liquidity`` scales the noise order rate, the speculator count and the market-maker quote size
@@ -43,19 +43,22 @@ def regime(liquidity: float = 1.0, institutions: int = 4, makers: int = 4, mm_si
     book and each child moves the price more); ``institutions`` sets how much legitimate large-order
     flow hides the executor (``0`` = no cover, every detected one-sided burst is the executor);
     ``makers`` the number of market makers; ``mm_size_scale`` thins the book independently of the rest;
-    ``capital`` scales what speculators and the noise pool hold, which a long metaorder can otherwise exhaust.
+    ``capital`` scales what speculators and the noise pool hold, which a long metaorder can otherwise exhaust;
+    ``min_half_spread`` floors the makers' quotes and, with ``improve`` off, nobody else posts inside them, which
+    makes a large-tick market whose spread is about twice the floor.
     Compose with ``adversary``: ``adversary("A4", base=regime(liquidity=0.5, institutions=1))``.
     """
     cfg = base or SimConfig()
-    noise = replace(cfg.noise, rate=cfg.noise.rate * liquidity)
+    noise = replace(cfg.noise, rate=cfg.noise.rate * liquidity, improve=improve)
     speculators = max(1, round(cfg.population.speculators * liquidity))
     templates = cfg.population.market_makers or (MarketMakerConfig(),)
     scale = liquidity * mm_size_scale
-    scaled = lambda m: replace(m, size=(max(1, round(m.size[0] * scale)), max(2, round(m.size[1] * scale))), detector=None)
+    scaled = lambda m: replace(m, size=(max(1, round(m.size[0] * scale)), max(2, round(m.size[1] * scale))), detector=None,
+                               min_half_spread=min_half_spread)
     pop = replace(cfg.population, institutions=institutions, speculators=speculators,
                   market_makers=tuple(scaled(templates[i % len(templates)]) for i in range(makers)))
     endowment = replace(cfg.endowment, speculator=cfg.endowment.speculator * capital, noise=cfg.endowment.noise * capital)
-    return replace(cfg, noise=noise, population=pop, endowment=endowment)
+    return replace(cfg, noise=noise, speculators=replace(cfg.speculators, improve=improve), population=pop, endowment=endowment)
 
 
 def private_valuations(base: SimConfig | None = None, adapt: float = 0.01) -> SimConfig:

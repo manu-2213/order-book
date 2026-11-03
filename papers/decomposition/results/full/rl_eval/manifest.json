@@ -1,0 +1,25 @@
+[
+ {
+  "simulator_version": "2",
+  "commit": "f9c3baf2bd62d1f5dd3dbb98fcdf9ec78ed8e065",
+  "dirty": false,
+  "origin": ".source_version",
+  "resumed": false,
+  "argv": [
+   "/data/home/acw796/order-book/papers/decomposition/scripts/rl_eval.py",
+   "--workers",
+   "16"
+  ],
+  "time_utc": "2026-11-03T12:48:59+00:00",
+  "host": "ddy184",
+  "slurm_job_id": "35233127",
+  "python": "3.11.7",
+  "numpy": "2.4.6",
+  "config": {
+   "policies": null,
+   "unseen_seeds": 80,
+   "workers": 16,
+   "quick": false
+  }
+ }
+]

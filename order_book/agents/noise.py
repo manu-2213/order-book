@@ -15,7 +15,9 @@ class NoiseFlow(Agent):
     lots. A fraction ``market_frac`` are market orders (half size, so takers
     are smaller than makers as in real books), ``cross_frac`` are marketable
     limits at the opposite best, the rest rest Geometric ticks behind it
-    (mean ``mean_offset`` + 1). The bid probability is tilted by
+    (mean ``mean_offset`` + 1), or, with ``improve`` off, that many ticks less
+    one behind their own side's best, so that they join the queue and never
+    narrow the spread. The bid probability is tilted by
     ``balance_weight`` toward the pool's cash share of wealth, so the pool
     cannot run itself out of cash or stock in a long trend. The pool stands
     for many traders, so its orders trade against its own resting ones
@@ -56,8 +58,10 @@ class NoiseFlow(Agent):
             bid, ask = book.best_bid, book.best_ask
             if side == "bid":
                 opposite = ask if ask is not None else round(m.public.mid) + 1
-                price = opposite if kinds[i] < cross else opposite - int(offsets[i])
+                anchor = opposite if cfg.improve else (bid if bid is not None else opposite - 1) + 1
+                price = opposite if kinds[i] < cross else anchor - int(offsets[i])
             else:
                 opposite = bid if bid is not None else round(m.public.mid) - 1
-                price = opposite if kinds[i] < cross else opposite + int(offsets[i])
+                anchor = opposite if cfg.improve else (ask if ask is not None else opposite + 1) - 1
+                price = opposite if kinds[i] < cross else anchor + int(offsets[i])
             m.limit(cid, side, price, quantity, cfg.stp_mode)

@@ -127,7 +127,7 @@ class MarketMaker(Agent):
         risk = cfg.gamma * var * cfg.horizon
         skew_account = self.skew_account or self.account
         reservation = ps.mid - self._skew(skew_account.shares - self.target, risk)
-        half = min(max((risk + (2 / cfg.gamma) * math.log1p(cfg.gamma / cfg.kappa)) / 2, 1.0), cfg.max_skew)
+        half = min(max((risk + (2 / cfg.gamma) * math.log1p(cfg.gamma / cfg.kappa)) / 2, cfg.min_half_spread), cfg.max_skew)
         widen = {"bid": 0.0, "ask": 0.0}
         scale = {"bid": fragile, "ask": fragile}
         signal = self.detector.signal if self.detector is not None else 0.0

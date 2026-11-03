@@ -5,7 +5,7 @@ Why the paired worlds. A policy difference worth having is a few tenths of a bas
 episode moves by several basis points with the market's own drift. The reference world steps in lockstep and never
 reacts to the executor, so its mid path is a control variate: the reward is the shortfall minus what a uniform schedule
 would have paid in drift along Arm 0's mid, which the policy cannot influence. This leaves the objective exactly the
-shortfall and removes most of the noise (the episode's standard deviation falls from about 5.7 to about 2.2 bps). The
+shortfall and removes most of the noise (the episode's standard deviation falls from about 7.3 to about 2.7 bps). The
 first attempt charged each fill against Arm 0's mid at that step instead, which removes the drift entirely, but also
 stops charging the drift an adaptive schedule pays, and the policies it produced saved on the spread and lost it on
 timing; that reward stays as the ``"net"`` ablation. The maker-facing flow detector is live in the treated world too,

@@ -83,9 +83,12 @@ Estimates come from the pilot's timings on the Mac, where the slowest seed was 1
 | `replications` | 20 | 1,360 | 2 | 4 | under 1 min |
 | `e8_capital_deep`, `e8_capital_low` | 20 each | 24,000 each | 15-20 | 4 | 5 min |
 | `e8_capital_horizons` | 20 | 18,000 | about 25 | 8 | 3 min |
-| `train_rl` | 10 variants | 1,000 PPO or GRPO iterations each | about 370 per hour per task (9.6 s an iteration) | 16 | 3 chained hours; `CHAIN=4` leaves a margin |
-| `rl_eval` | 1 | 10 policies x up to 6 cells x 120 seeds, plus TWAP once per episode | about 25 | 16 | 20 min |
+| `train_rl` | 10 variants | 1,000 PPO or GRPO iterations each | about 370 per hour per task (9.6 s an iteration) | 16 | 3 chained hours; `CHAIN=5` leaves a margin, unused links exit at once |
+| `rl_eval` | 1 | 10 policies x up to 6 cells x 120 seeds, plus TWAP once per episode; also writes `analysis.json` and `episodes.jsonl` | about 25 | 16 | 20 min |
 | `e8_rl` | 20 | 14,400 | about 10 | 8 | 3 min |
+| `rl_ceiling` | 1 | 4,720 | about 10 | 16 | 15 min |
+| `train_rl_large_tick` | 6 variants | 1,000 iterations each, large-tick market | as `train_rl` | 16 | 3 chained hours, `CHAIN=5` |
+| `rl_eval_large_tick`, `e8_rl_large_tick` (20 tasks, 10,800 runs), `rl_ceiling_large_tick` | | the same results in the large-tick market | | | as above |
 | `runaway_causes` | 1 | 1,120 | about 20 | 16 | 20 min |
 | `market_probe` | 1 | 13 configs x 20 seeds | a few | 16 | a few min |
 | `rl_heldout` (stealth_execution) | 1 | 2 policies x 120 seeds x 2 | about 10 | 16 | a few min |
@@ -98,8 +101,9 @@ stealth paper's `rl_heldout`, the training chain and, behind it, the results job
 across versions, so stale folders fail loudly rather than mix.
 
 `train_rl` is the one job that outlives an hour. Each task checkpoints before the walltime and the next link of the chain resumes it;
-a link that finds its run finished exits at once, so an extra link costs nothing. `submit_all.sh rl` chains 4 links and queues `rl_eval` and
+a link that finds its run finished exits at once, so an extra link costs nothing. `submit_all.sh rl` chains 5 links and queues `rl_eval` and
 `e8_rl` behind the last one (`AFTER=<job id>` in `hpc/submit.sh`), so one command gives the policies, their scores and their decomposition.
+`submit_all.sh large_tick` does the same for the large-tick market (six variants, then `large_tick_results`); `final` runs both.
 If a task's log does not end in `done` after the chain, `CHAIN=2 bash hpc/submit.sh decomposition train_rl` adds hours and `submit_all.sh rl_results`
 redoes the results from the finished policies. Delete `outputs/decomposition/e8_rl` on the cluster before any rerun with a different sweep: shards resume.
 
