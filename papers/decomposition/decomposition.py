@@ -36,7 +36,7 @@ from order_book.counterfactual import (
     PREDATOR_CONTROL, Channels, PairedResult, PairedSpec, run_paired,
 )
 from order_book.execution import Calibration, all_baselines
-from order_book.experiments import CAPITAL_REGIMES, RegimeSpec, SIZES, TEST_SEEDS  # noqa: F401  CAPITAL_REGIMES is re-exported
+from order_book.experiments import RegimeSpec, SIZES, TEST_SEEDS
 from order_book.runner import IncompleteShards, iter_jobs, load_results, load_shards, missing_shards, seed_of_shard, shard_dir
 from order_book.scoring import bootstrap_ci, bootstrap_ratio, crn_diagnostics, holm, paired_difference
 from order_book.validation import fit_power_law
@@ -47,7 +47,6 @@ PLAN_LABEL_STEPS = {2: "inventory", 3: "price", 4: "detection", 5: "predation"}
 CONTROLS = (CHARTISTS_BLIND, MAKERS_BLIND, FUNDAMENTALISTS_BLIND, PREDATOR_CONTROL)
 PRICE_GROUPS = {"chartists": CHARTISTS_BLIND, "makers": MAKERS_BLIND, "fundamentalists": FUNDAMENTALISTS_BLIND}
 DEEP_COVER = RegimeSpec("deep_cover", 1.0, 4)
-LOW_COVER = RegimeSpec("low_cover", 1.0, 1)
 
 
 def shapley(values: dict, players: str = CHANNEL_ORDER) -> dict:
@@ -481,8 +480,8 @@ class ProtocolConfig:
 def summarise_protocol(results: list[PairedResult]) -> dict:
     """Variance reduction and Sharma's condition per contrast and pairing scheme, per cell and pooled.
 
-    The pooled figure divides each contrast's seeds' variances by cell before comparing the schemes, as the median
-    of the per-cell reductions; the ratio row is counter-based over stateful, above 1 when keying the draws helps.
+    The pooled figure is the median of the per-cell variance reductions; a cell whose arms pair perfectly (an infinite
+    reduction) is left out of it, which can only understate the scheme that achieved it.
     """
     by_mode: dict = {}
     for r in results:

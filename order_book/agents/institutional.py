@@ -65,7 +65,7 @@ class InstitutionalTrader(Agent):
 
     Progress is measured from the trader's own account (shares relative to
     the start of the metaorder), so passive fills need no callbacks. The side
-    is a buy with probability 1/2 - tanh(inventory / endowment) / 2, where
+    is a buy with probability 1/2 - tanh(inventory_pull x inventory) / 2, where
     inventory is the holding relative to the initial endowment, so each
     trader's holding mean-reverts and the population's aggregate flow stays
     balanced over long runs instead of random-walking into the other agents'
@@ -101,8 +101,8 @@ class InstitutionalTrader(Agent):
             return
         getattr(self, "_" + self.record.style)()
 
-    def _start(self, rng=None) -> None:
-        rng, cfg, account = rng if rng is not None else self.draws(INST_START), self.cfg, self.account
+    def _start(self, rng) -> None:
+        cfg, account = self.cfg, self.account
         inventory = (account.shares - self.endowment) / max(self.endowment, 1)
         side = "bid" if rng.random() < 0.5 - 0.5 * math.tanh(cfg.inventory_pull * inventory) else "ask"
         size = int(min(cfg.size_max, round(cfg.size_median * math.exp(cfg.size_sigma * rng.standard_normal()))))

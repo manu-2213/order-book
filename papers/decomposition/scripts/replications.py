@@ -45,7 +45,7 @@ def main():
     directory = OUT / ("replications_quick" if args.quick else "replications")  # a smoke test never overwrites real results
     directory.mkdir(parents=True, exist_ok=True)
     config = {"only": list(args.only), "seeds": seeds, "regime": regime.name, **timing}
-    write_manifest(shard_dir(directory, args.shard) if args.shard is not None else directory, config, True)
+    write_manifest(shard_dir(directory, args.shard) if args.shard is not None else directory, config, args.shard is not None or args.resume)
 
     quick = args.quick
     grids = {}

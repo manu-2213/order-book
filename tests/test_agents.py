@@ -60,8 +60,8 @@ def test_institutional_side_reverts_inventory():
     assert isinstance(trader, InstitutionalTrader)
     trader.account.shares = trader.endowment * 3  # heavily long: should overwhelmingly sell
     sides = []
-    for _ in range(200):
-        trader._start()
+    for i in range(200):
+        trader._start(np.random.default_rng(i))
         sides.append(trader.record.side)
         trader.record, trader.resting = None, None
     assert sides.count("ask") > 170

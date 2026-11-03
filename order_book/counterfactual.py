@@ -47,11 +47,11 @@ import numpy as np
 from order_book.agents import MarketMaker, OrderAnticipator
 from order_book.config import SimConfig
 from order_book.execution import Calibration, ExecutionTask, ExecutorAgent, expected_volume_from_tape, make_strategy
+from order_book.execution.task import EXECUTOR_ENDOWMENT
 from order_book.ghost import GhostConfig, GhostMarket
 from order_book.presets import adversary
 from order_book.simulator import Simulator
 
-EXECUTOR_ENDOWMENT = 50_000          # shares; cash = shares x mid, so any task size is funded
 
 
 @dataclass(frozen=True)

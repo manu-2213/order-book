@@ -39,7 +39,7 @@ def main():
     out = OUTPUTS / "impact.json"
     paths = {f"{r.seed}_{r.style}_{r.participation:.3f}": r.path.tolist() for r in runs}
     with open(out, "w") as f:
-        json.dump({**{k: v for k, v in s.items()}, "paths": paths}, f, default=float)
+        json.dump({**s, "paths": paths}, f, default=float)
     np.savez_compressed(OUTPUTS / "impact_paths.npz", **{k: np.asarray(v) for k, v in paths.items()})
     print(f"saved {out} and {OUTPUTS / 'impact_paths.npz'}")
 

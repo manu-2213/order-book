@@ -44,7 +44,8 @@ class ImpactRun:
         return float(self.path[min(self.duration + after, len(self.path) - 1)])
 
 
-def _mid_path(sim: Simulator, steps: int) -> np.ndarray:
+def mid_path(sim: Simulator, steps: int) -> np.ndarray:
+    """The mid after each of the next ``steps`` steps."""
     ps, out = sim.market.public, np.empty(steps)
     for t in range(steps):
         sim.step()
@@ -57,7 +58,7 @@ def baseline(seed: int, config: SimConfig | None, burn_in: int, horizon: int) ->
     sim = Simulator(seed, config, analysis=True)
     sim.run(burn_in)
     offset = len(sim.market.tape)
-    mid = _mid_path(sim, horizon)
+    mid = mid_path(sim, horizon)
     volume = sum(t[2] for t in sim.market.tape[offset:]) / horizon
     return mid, volume
 
@@ -69,7 +70,7 @@ def injected(seed: int, config: SimConfig | None, burn_in: int, horizon: int, si
                               cfg=replace(InstitutionalConfig(), start_rate=0.0), log=sim.metaorders)
     sim.run(burn_in)
     record = trader.begin(side, size, participation, style, duration=duration)
-    mid = _mid_path(sim, horizon)
+    mid = mid_path(sim, horizon)
     if record is not None and record.end is None:  # still running at the end of the window
         trader._finish()
     return mid, record

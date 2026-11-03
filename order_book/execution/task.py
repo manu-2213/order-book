@@ -15,6 +15,9 @@ from order_book.agents.base import Agent
 from order_book.rng import EXEC_DECIDE, EXEC_RESET
 
 
+EXECUTOR_ENDOWMENT = 50_000  # shares; cash = shares x mid, so any task size is funded
+
+
 @dataclass(frozen=True)
 class ExecutionTask:
     """What the executor must do; the size is a fraction of expected market volume over the horizon."""

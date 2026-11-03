@@ -20,7 +20,10 @@ from pathlib import Path
 def iter_jobs(fn, jobs: list, workers: int = 1, chunksize: int = 1):
     if workers > 1:
         with ProcessPoolExecutor(workers) as pool:
-            yield from pool.map(fn, jobs, chunksize=chunksize)
+            try:
+                yield from pool.map(fn, jobs, chunksize=chunksize)
+            finally:
+                pool.shutdown(cancel_futures=True)  # an error in the consumer stops the grid instead of finishing it first
     else:
         yield from map(fn, jobs)
 

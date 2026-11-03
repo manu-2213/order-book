@@ -8,11 +8,11 @@
 #SBATCH --mem-per-cpu=1G
 #SBATCH -t 1:0:0
 #SBATCH -a 1-20
-# The decomposition of every trained policy next to TWAP: 10 executors x 3 sizes x 20 worlds, one seed per task, seeds 1020-1039, 12,000 runs.
-# After the rl chain, because it reads the policies. Submit with hpc/submit.sh, which queues the merge after it.
+# The decomposition of every trained policy next to TWAP: 12 executors x 3 sizes x 20 worlds, one seed per task, seeds 1020-1039, 14,400 runs.
+# Reads the policies, so submit_all.sh rl queues it after the training chain, with its merge.
 set -eo pipefail
 cd "$SLURM_SUBMIT_DIR/../../.."
 source hpc/env.sh
 set -u
 
-python -u -m papers.decomposition.scripts.decompose --out e8_rl --regime low_cover_capital10 --strategies twap_market twap_passive rl@outputs/decomposition/rl/net/best_policy.pt rl@outputs/decomposition/rl/net_detect0.01/best_policy.pt rl@outputs/decomposition/rl/net_detect0.03/best_policy.pt rl@outputs/decomposition/rl/net_detect0.1/best_policy.pt rl@outputs/decomposition/rl/is/best_policy.pt rl@outputs/decomposition/rl/net_impact1/best_policy.pt rl@outputs/decomposition/rl/net_mixed/best_policy.pt rl@outputs/decomposition/rl/net_seed1/best_policy.pt --sizes 0.1 0.2 0.4 --first-seed 1020 --seeds 20 --shard $SLURM_ARRAY_TASK_ID --workers $SLURM_NTASKS
+python -u -m papers.decomposition.scripts.decompose --out e8_rl --regime low_cover_capital10 --strategies twap_market twap_passive rl@outputs/decomposition/rl/ppo/best_policy.pt rl@outputs/decomposition/rl/grpo/best_policy.pt rl@outputs/decomposition/rl/ppo_net/best_policy.pt rl@outputs/decomposition/rl/ppo_detect0.03/best_policy.pt rl@outputs/decomposition/rl/grpo_detect0.03/best_policy.pt rl@outputs/decomposition/rl/ppo_mixed/best_policy.pt rl@outputs/decomposition/rl/grpo_mixed/best_policy.pt rl@outputs/decomposition/rl/ppo_seed1/best_policy.pt rl@outputs/decomposition/rl/grpo_seed1/best_policy.pt rl@outputs/decomposition/rl/grpo_g8/best_policy.pt --sizes 0.1 0.2 0.4 --first-seed 1020 --seeds 20 --shard $SLURM_ARRAY_TASK_ID --workers $SLURM_NTASKS

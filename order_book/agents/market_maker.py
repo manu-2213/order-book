@@ -131,11 +131,10 @@ class MarketMaker(Agent):
         widen = {"bid": 0.0, "ask": 0.0}
         scale = {"bid": fragile, "ask": fragile}
         signal = self.detector.signal if self.detector is not None else 0.0
-        if signal:
-            pressured = "ask" if signal > 0 else "bid"  # buyers hit asks, sellers hit bids
-            reservation += cfg.detect_skew * signal
-            widen[pressured] = cfg.detect_widen * abs(signal)
-            scale[pressured] *= max(1.0 - cfg.detect_size_cut * abs(signal), 0.0)
+        reservation += cfg.detect_skew * signal
+        for side in ("bid", "ask"):
+            widen[side], cut = self._pressure(side, signal)
+            scale[side] *= cut
         bid = reservation - half - widen["bid"]
         ask = max(reservation + half + widen["ask"], bid + 2)
         own = {s: book.get_order(q) if q is not None else None for s, q in self.quotes.items()}

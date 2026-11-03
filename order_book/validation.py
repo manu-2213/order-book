@@ -175,12 +175,11 @@ def summarise(runs: list[SeedRun], sample_every: int = 10, horizons=(1, 5, 20, 1
     s["metaorder_shortfall_bps"] = {
         style: float(np.mean([c["shortfall_bps"] for c in curve if c["style"] == style]))
         for style in sorted({c["style"] for c in curve})}
-    volume_rows = [(c["participation"], c["size"] / max(c["duration"], 1)) for c in curve]
-    s["metaorder_lots_per_step"] = float(np.mean([v for _, v in volume_rows])) if volume_rows else float("nan")
+    s["metaorder_lots_per_step"] = float(np.mean([c["size"] / max(c["duration"], 1) for c in curve])) if curve else float("nan")
     rejects = [r.budget_rejects for r in runs]
-    total_orders = sum(len(r.tape) for r in runs)
+    total_trades = sum(len(r.tape) for r in runs)
     s["budget_rejects"] = {"bid": sum(x["bid"] for x in rejects), "ask": sum(x["ask"] for x in rejects),
-                           "per_trade": (sum(x["bid"] + x["ask"] for x in rejects) / total_orders) if total_orders else 0}
+                           "per_trade": (sum(x["bid"] + x["ask"] for x in rejects) / total_trades) if total_trades else 0}
     s["impact_rows"] = curve
     return s
 
@@ -245,7 +244,7 @@ def run_validation(seeds, steps: int, config: SimConfig | None = None, burn_in: 
     if paired_impact:
         from order_book.impact import measure_impact, summarise_impact  # local import: impact imports this module
         impact_runs = measure_impact(seeds, impact_fractions, config=config, burn_in=burn_in)
-        summary["paired_impact"] = {k: v for k, v in summarise_impact(impact_runs).items()}
+        summary["paired_impact"] = summarise_impact(impact_runs)
     return summary
 
 

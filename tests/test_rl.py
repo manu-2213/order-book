@@ -10,7 +10,7 @@ from order_book.execution import (
     ACTIONS, ExecutionEnv, N_ACTIONS, N_FEATURES, PolicyNet, PolicyStrategy, PPOConfig, PPOTrainer,
     decision, features, make_strategy, new_policy, phase3_config,
 )
-from order_book.execution.task import ExecState
+from order_book.execution.task import Decision, ExecState
 
 
 def fake_state(remaining=100, executed=0, decisions_left=10, side="bid"):
@@ -89,7 +89,7 @@ def test_make_strategy_loads_rl_policy(tmp_path):
     new_policy(seed=3).save(path)
     strat = make_strategy(f"rl@{path}")
     assert isinstance(strat, PolicyStrategy)
-    assert isinstance(decision(0, fake_state()), type(decision(0, fake_state())))
+    assert decision(0, fake_state()) == Decision()  # action 0 holds
 
 
 def test_ppo_update_runs_and_changes_weights():

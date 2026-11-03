@@ -70,6 +70,7 @@ class OrderBookEnv(gym.Env):
     def step(self, action: int):
         m, cid, size = self.sim.market, self.cid, self.order_size
         book = m.book
+        before = m.wealth(cid)  # before the order, so that crossing the spread is paid for in the reward
         if action == 1:
             m.market(cid, "bid", size)
         elif action == 2:
@@ -80,7 +81,6 @@ class OrderBookEnv(gym.Env):
             m.limit(cid, "ask", book.best_ask if book.best_ask is not None else math.ceil(m.public.mid) + 1, size)
         elif action == 5:
             m.cancel_all(cid)
-        before = m.wealth(cid)
         self.sim.run(self.decision_interval)
         self.decisions += 1
         reward = m.wealth(cid) - before

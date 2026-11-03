@@ -22,6 +22,7 @@ import numpy as np
 from order_book.config import FlowDetectorConfig, SimConfig
 from order_book.detectors import FlowDetector, LearnedDetector, held_out_detectors
 from order_book.execution import Calibration, ExecutionTask, ExecutorAgent, expected_volume_from_tape, make_strategy
+from order_book.execution.task import EXECUTOR_ENDOWMENT
 from order_book.presets import FLOW_THRESHOLDS, adversary
 from order_book.runner import iter_jobs
 from order_book.simulator import Simulator
@@ -29,7 +30,6 @@ from order_book.simulator import Simulator
 TRAIN_SEEDS = range(0, 1000)
 TEST_SEEDS = range(1000, 1020)
 SIZES = (0.05, 0.10, 0.20)
-EXECUTOR_ENDOWMENT = 50_000          # shares; cash = shares x mid, so any task size is funded
 
 
 # ----- adversaries ------------------------------------------------------------------------ #

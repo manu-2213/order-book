@@ -54,7 +54,7 @@ class NoiseFlowConfig:
     rate: float = 2.5             # Poisson orders per step before the attention multiplier
     cancel_prob: float = 0.015    # per resting order per step
     max_qty: int = 12             # order size is uniform on 1..max_qty
-    mean_offset: float = 3.0      # mean ticks behind the opposite best for passive limits
+    mean_offset: float = 3.0      # passive limits rest 1 + Geometric(1/(1+mean_offset)) ticks behind the opposite best
     market_frac: float = 0.15     # share of orders sent as (half-size) market orders
     cross_frac: float = 0.05      # share sent as marketable limits at the opposite best
     balance_weight: float = 0.5   # tilt of the bid probability toward the pool's cash share

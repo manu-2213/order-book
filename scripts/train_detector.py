@@ -18,9 +18,7 @@ import numpy as np
 
 from order_book.detectors.learned import collect_dataset, train
 from order_book.experiments import ADVERSARIES
-from scripts import OUTPUTS
-
-WEIGHTS_PATH = OUTPUTS / "detectors" / "learned.npz"
+from scripts._common import WEIGHTS_PATH
 
 
 def main():

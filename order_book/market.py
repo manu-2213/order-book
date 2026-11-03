@@ -72,9 +72,6 @@ class Market:
         account = self.accounts[cid]
         return account.cash + account.shares * self.public.mid
 
-    def orders(self, cid: int):
-        return self.book.get_client_orders(cid)
-
     # ----- settlement ------------------------------------------------------ #
 
     def _release(self, order) -> None:
@@ -150,13 +147,6 @@ class Market:
         report = self._settle(self.book.limit(side, cid, price, quantity))
         if self.mirror is not None:
             self.mirror.on_order(report)
-        return report
-
-    def ioc(self, cid: int, side: Side, price: int, quantity: int) -> Report | None:
-        """Immediate-or-cancel: trade up to ``price`` now, cancel whatever would rest."""
-        report = self.limit(cid, side, price, quantity)
-        if report is not None and report["resting_quantity"]:
-            self.cancel(cid, report["order_id"])
         return report
 
     def market(self, cid: int, side: Side, quantity: int) -> Report | None:

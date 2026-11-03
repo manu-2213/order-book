@@ -25,7 +25,7 @@ class FeatureTracker:
     def __init__(self, volume_clock: int = 100, long_window: int = 200, return_window: int = 50):
         self.volume_clock, self.long_window, self.return_window = volume_clock, long_window, return_window
         self._flow = deque(maxlen=long_window)        # (buy_volume, sell_volume, trade_count, buy_count) per step
-        self._clock: deque = deque()                  # (side, qty) most recent aggressive trades, <= volume_clock lots
+        self._clock: deque = deque()                  # (side, qty) most recent aggressive trades, at least volume_clock lots
         self._clock_volume = 0
         self._mids = deque(maxlen=return_window + 1)
         self.run_sign, self.run_length = 0, 0

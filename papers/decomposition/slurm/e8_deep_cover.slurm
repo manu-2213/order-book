@@ -8,7 +8,7 @@
 #SBATCH --mem-per-cpu=1G         # a worker peaks near 200 MB
 #SBATCH -t 1:0:0
 #SBATCH -a 1-20
-# E8 in the deep-cover market: 12 baselines x 5 sizes x 20 worlds, one seed per task, 20 seeds, 21,600 runs.
+# E8 in the deep-cover market: 12 baselines x 5 sizes x 20 worlds, one seed per task, 20 seeds, 24,000 runs.
 # Submit with hpc/submit.sh, which queues the merge after it. A task killed at the hour keeps its finished runs; the merge prints what to resubmit.
 set -eo pipefail
 cd "$SLURM_SUBMIT_DIR/../../.."

@@ -191,7 +191,7 @@ def summarise_e3(results: list[EpisodeResult], gate_strategy: str = "twap_market
         rows[f"{key[0]}|{key[1]}|{key[2]}"]["leakage"]["p_holm"] = p_adj
     gate = [(k, v["leakage"]) for k, v in rows.items() if k.startswith(gate_strategy + "|") and "leakage" in v
             and not k.endswith("|A0")]
-    passed = any(l["p_greater"] < 0.05 and l["mean"] > 0 for _, l in gate)
+    passed = any(l["p_holm"] < 0.05 and l["mean"] > 0 for _, l in gate)  # Holm across the gate's cells, not the raw p
     return {"rows": rows, "gate": {"strategy": gate_strategy, "passed": passed,
                                    "tests": {k: l for k, l in gate}}}
 
@@ -312,7 +312,8 @@ def summarise_e7(results: list[EpisodeResult]) -> dict:
             "flow_firing_visible": float(np.nanmean(firing_vis)),
             "flow_firing_channel": float(np.nanmean(np.array(firing_vis) - np.array(firing_inv))),
         }
-    return {"rows": rows, "regimes": {rs.name: asdict(rs) for rs in DEFAULT_REGIMES}}
+    present = {key.split("|")[0] for key in rows}
+    return {"rows": rows, "regimes": {rs.name: asdict(rs) for rs in DEFAULT_REGIMES if rs.name in present}}
 
 
 def format_e7(summary: dict) -> str:

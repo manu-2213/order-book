@@ -63,6 +63,19 @@ def code(name: str) -> str:
     return r"\code{" + name.replace("_", "\\_") + "}"
 
 
+def interval(t: dict) -> str:
+    return f"{t['estimate']:+.2f} [{t['low']:+.2f}, {t['high']:+.2f}]"
+
+
+def phi_cells(r: dict) -> str:
+    """The four Shapley values of a cell, as table cells."""
+    p = r["shapley"]
+    return f"{p['inventory']['mean']:+.2f} & {p['price']['mean']:+.2f} & {p['detection']['mean']:+.2f} & {p['predation']['mean']:+.2f}"
+
+
+AXIS_LABELS = {"participation": "Nominal $Q/V$", "timing_jitter": "Timing jitter", "size_jitter": "Size jitter", "passive_share": "Passive share"}
+
+
 def executor(name: str) -> str:
     if "sz0.20" in name:
         return "PPO (trained at 0.20)"
@@ -72,10 +85,8 @@ def executor(name: str) -> str:
 
 
 def _decomposition_row(strategy: str, size: str, r: dict) -> str:
-    p = r["shapley"]
     return (f"{code(strategy)} & {float(size):.2f} & {r['realised_q_over_v']:.3f} & {r['is']['arm5'][0]:.2f} & {r['natural_drift'][0]:.2f} & "
-            f"{r['mechanical'][0]:.2f} & {ci(r['reaction'])} & {r['reaction_share'][0]:.2f} & {p['inventory']['mean']:+.2f} & "
-            f"{p['price']['mean']:+.2f} & {p['detection']['mean']:+.2f} & {p['predation']['mean']:+.2f}")
+            f"{r['mechanical'][0]:.2f} & {ci(r['reaction'])} & {r['reaction_share'][0]:.2f} & {phi_cells(r)}")
 
 
 DECOMPOSITION_HEAD = r"Executor & $Q/V$ & Real & IS & Drift & Mech. & Reaction & Share & $\phi_I$ & $\phi_P$ & $\phi_D$ & $\phi_A$\\"
@@ -96,11 +107,10 @@ def curve_table(curve: dict, market: str, label: str) -> str:
     base = axes["participation"][0]["detectors"]
     lines = _begin(rf"\caption{{The detection curve at the medium threshold, {market} market. Signal is the mean signal in the executor's direction. Leakage in bps.}}\label{{{label}}}", "@{}lrrrrrl@{}")
     lines.append(rf"Axis, value & Flow signal & A3 signal & A3 duty & A3 latency & Flow latency & Leakage\\ Arm 0 & {base['flow_medium']['signal_arm0']:+.3f} & {base['learned']['signal_arm0']:+.3f} & {base['learned']['duty_arm0']:.3f} & & & \\\midrule")
-    labels = {"participation": "Nominal $Q/V$", "timing_jitter": "Timing jitter", "size_jitter": "Size jitter", "passive_share": "Passive share"}
     for axis, rows in axes.items():
         for r in rows:
             f, l = r["detectors"]["flow_medium"], r["detectors"]["learned"]
-            lines.append(f"{labels[axis]} {r['value']:.2f} & {f['signal'][0]:+.3f} & {l['signal'][0]:+.3f} & {l['duty'][0]:.3f} & {l['latency_median']:.0f} & {f['latency_median']:.0f} & {ci(r['leakage'])}\\\\")
+            lines.append(f"{AXIS_LABELS[axis]} {r['value']:.2f} & {f['signal'][0]:+.3f} & {l['signal'][0]:+.3f} & {l['duty'][0]:.3f} & {l['latency_median']:.0f} & {f['latency_median']:.0f} & {ci(r['leakage'])}\\\\")
         lines.append(r"\midrule")
     lines.pop()
     return "\n".join(lines + [END])
@@ -134,7 +144,6 @@ def build(pilot, low, proto, curve, rep, held) -> dict:
     for k in range(1, 6):
         lines.append(f"{k} & {arm(a['arms'][f'arm{k}'])} & {arm(b['arms'][f'arm{k}'])}\\\\")
     lines.append(r"\midrule")
-    interval = lambda t: f"{t['estimate']:+.2f} [{t['low']:+.2f}, {t['high']:+.2f}]"
     for name, label in (("delta_impact_mean_arm1_minus_arm5", r"$\delta_{\text{mean}}$, Arm 1 $-$ Arm 5"), ("delta_impact_peak_arm1_minus_arm5", r"$\delta_{\text{peak}}$, Arm 1 $-$ Arm 5"),
                         ("delta_cost_arm1_minus_arm5", r"$\delta_{\text{cost}}$, Arm 1 $-$ Arm 5"), ("reversion_arm5_minus_arm3", "Reversion, Arm 5 $-$ Arm 3")):
         lines.append(rf"\multicolumn{{3}}{{@{{}}l}}{{{label}}} & \multicolumn{{3}}{{l|}}{{{interval(a['tests'][name])}}} & \multicolumn{{5}}{{l}}{{{interval(b['tests'][name])}}}\\")

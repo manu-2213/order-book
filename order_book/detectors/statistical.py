@@ -3,7 +3,7 @@ never used in training.
 
     RunsDetector         runs of same-sign aggressive trades
     CusumDetector        two-sided CUSUM on the per-step normalised signed flow (online change-point)
-    VolumeClockDetector  flow imbalance over the last ``volume`` lots instead of a time window
+    VolumeClockDetector  flow imbalance over the last ``volume_clock`` lots instead of a time window
     RegularityDetector   metaorder reconstruction in miniature: a persistent same-sign run with
                          regular child sizes (in the style of Goliath & Gebbie, 2026)
 """
@@ -81,7 +81,7 @@ class CusumDetector(Detector):
 
 
 class VolumeClockDetector(_FeatureDetector):
-    """Imbalance over the last ``volume`` lots, thresholded like the flow detector."""
+    """Imbalance over the tracker's last ``volume_clock`` lots, thresholded like the flow detector."""
 
     def __init__(self, threshold: float = 0.3):
         super().__init__()

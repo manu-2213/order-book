@@ -15,11 +15,10 @@ import argparse
 from dataclasses import replace
 
 from papers.decomposition.decomposition import (
-    CAPITAL_REGIMES,
     DecompositionConfig, compare_executors, format_concavity, format_controls, format_decomposition, format_executors,
     merge_grid, run_grid, run_shard, summarise_concavity, summarise_decomposition,
 )
-from order_book.experiments import DEFAULT_REGIMES
+from order_book.experiments import CAPITAL_REGIMES, DEFAULT_REGIMES
 from order_book.provenance import write_manifest
 from order_book.runner import shard_dir
 from papers.decomposition import OUT

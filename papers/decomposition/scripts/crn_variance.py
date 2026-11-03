@@ -10,14 +10,13 @@ Outputs: outputs/decomposition/protocol/episodes.jsonl, outputs/decomposition/pr
 """
 
 import argparse
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 
 import numpy as np
 
 from order_book.counterfactual import FULL, PairedSpec, flow_coupling
 from order_book.provenance import write_manifest
-from order_book.runner import shard_dir
+from order_book.runner import iter_jobs, shard_dir
 from papers.decomposition.decomposition import ProtocolConfig, format_protocol, merge_grid, run_grid, run_shard, summarise_protocol
 from papers.decomposition import OUT
 from scripts._common import write_json
@@ -60,11 +59,7 @@ def main():
     jobs = [PairedSpec(seed, strategy, cfg.sizes[-1], FULL, horizon=cfg.horizon, burn_in=cfg.burn_in, after=cfg.after,
                        base_config=base, regime=cfg.regime.name, rng=mode)
             for mode in cfg.modes for strategy in cfg.strategies for seed in cfg.seeds[:10]]
-    if args.workers > 1:
-        with ProcessPoolExecutor(args.workers) as pool:
-            rows = list(pool.map(_coupling, jobs))
-    else:
-        rows = [_coupling(j) for j in jobs]
+    rows = list(iter_jobs(_coupling, jobs, args.workers))
     coupling: dict = {}
     for mode, strategy, overlap in rows:
         coupling.setdefault(mode, {}).setdefault(strategy, []).append(overlap)

@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from papers.decomposition import OUT
-from papers.decomposition.scripts.make_tables import build, ci, code, executor, horizons_table
+from papers.decomposition.scripts.make_tables import AXIS_LABELS, build, ci, code, executor, horizons_table, interval, phi_cells
 from papers.decomposition.scripts.runaway_causes import RUNAWAY_TICKS, VARIANTS
 
 HERE = Path(__file__).resolve().parents[1]
@@ -102,9 +102,7 @@ def twap_table(deep: dict, cap: dict) -> str:
         lines.append(rf"\multicolumn{{9}}{{@{{}}l}}{{\emph{{{title}}}}}\\")
         for size in ("0.02", "0.05", "0.1", "0.2", "0.4"):
             r = run["summary"]["rows"][row_key(run, "twap_market", size, 2000)]
-            p = r["shapley"]
-            lines.append(f"{float(size):.2f} & {r['realised_q_over_v']:.3f} & {r['mechanical'][0]:.2f} & {ci(r['reaction'])} & {share(r)} & "
-                         f"{p['inventory']['mean']:+.2f} & {p['price']['mean']:+.2f} & {p['detection']['mean']:+.2f} & {p['predation']['mean']:+.2f}\\\\")
+            lines.append(f"{float(size):.2f} & {r['realised_q_over_v']:.3f} & {r['mechanical'][0]:.2f} & {ci(r['reaction'])} & {share(r)} & {phi_cells(r)}\\\\")
     return table(r"The decomposition of \code{twap\_market}, deep-cover market, $T = 2000$. Costs in basis points, with 95\% intervals over seeds. The share is the reaction over cost net of natural drift.",
                  "tab:twap", "@{}rrrllrrrr@{}", lines)
 
@@ -138,7 +136,6 @@ def horizon_table(main: dict, cap: dict, tail: dict, tail_cap: dict) -> str:
 
 
 def concavity_table(deep: dict, cap: dict, main_h: dict, cap_h: dict) -> str:
-    interval = lambda t: f"{t['estimate']:+.2f} [{t['low']:+.2f}, {t['high']:+.2f}]"
     lines = [r"Market, sizes & $T$ & Executor & $\delta_{\text{mean}}$, Arm 1 & $\delta_{\text{mean}}$, Arm 5 & Difference & $\delta_{\text{peak}}$ difference\\\midrule"]
     for title, run, horizons in (("Main, 5", deep, (2000,)), (r"$10\times$, 5", cap, (2000,)), ("Main, 3", main_h, (500, 2000, 8000)), (r"$10\times$, 3", cap_h, (500, 2000, 8000))):
         prefix = next(iter(run["concavity"])).split("|")[0]
@@ -204,29 +201,27 @@ def ppo_table(low: dict) -> str:
         lines.append(rf"\multicolumn{{13}}{{@{{}}l}}{{\emph{{{title}}}}}\\")
         for size in sizes:
             r, e = low["summary"]["rows"][f"low_cover|{name}|{size}|2000"], low["executors"][f"low_cover|{name}|{size}|2000"]
-            p = r["shapley"]
             lines.append(f"{float(size):.2f} & {r['forced_share']:.3f} & {1 - r['aggressive_share']:.2f} & {r['mechanical'][0]:.2f} & {ci(r['reaction'])} & {r['reaction_share'][0]:.2f} & "
-                         f"{p['inventory']['mean']:+.2f} & {p['price']['mean']:+.2f} & {p['detection']['mean']:+.2f} & {p['predation']['mean']:+.2f} & "
-                         f"{ci(e['d_is'])} & {ci(e['d_mechanical'])} & {ci(e['d_reaction'])}\\\\")
+                         f"{phi_cells(r)} & {ci(e['d_is'])} & {ci(e['d_mechanical'])} & {ci(e['d_reaction'])}\\\\")
     lines.append(r"\multicolumn{13}{@{}l}{\emph{Panel: \code{twap\_market}, the reference}}\\")
     for size in sizes:
         r = low["summary"]["rows"][f"low_cover|twap_market|{size}|2000"]
-        p = r["shapley"]
         lines.append(f"{float(size):.2f} & {r['forced_share']:.3f} & {1 - r['aggressive_share']:.2f} & {r['mechanical'][0]:.2f} & {ci(r['reaction'])} & {r['reaction_share'][0]:.2f} & "
-                     f"{p['inventory']['mean']:+.2f} & {p['price']['mean']:+.2f} & {p['detection']['mean']:+.2f} & {p['predation']['mean']:+.2f} & & & \\\\")
+                     f"{phi_cells(r)} & & & \\\\")
     return table(r"The decomposition of the PPO policies, low-cover main market, $T = 2000$, seeds 1000--1019, in basis points with 95\% intervals. Forced is the share of the order pushed through at the horizon, Passive the share of volume not sent aggressively. $\Delta$ is against \code{twap\_market} on the same seeds.",
                  "tab:ppo", "@{}rrrrlrrrrrlll@{}", lines)
 
 
 def rl_eval_table(rows: list[dict]) -> str:
     """The second-generation policies against TWAP: validation seeds, then unseen seeds."""
-    lines = [r"Policy & Market & Nominal & \multicolumn{2}{c}{Net of drift, PPO $-$ TWAP} & \multicolumn{2}{c}{IS, PPO $-$ TWAP} & \multicolumn{2}{c}{Exposure}\\",
-             r" & & & Validation & Unseen & Validation & Unseen & PPO & TWAP\\\midrule"]
+    lines = [r"Policy & Market & Nominal & \multicolumn{2}{c}{IS, policy $-$ TWAP} & \multicolumn{2}{c}{Net of drift, policy $-$ TWAP} & \multicolumn{2}{c}{Exposure}\\",
+             r" & & & Validation & Unseen & Validation & Unseen & Policy & TWAP\\\midrule"]
     by = {(r["name"], r["regime"], r["size"], r["seeds"]): r for r in rows}
     for name, regime, size in sorted({(r["name"], r["regime"], r["size"]) for r in rows}):
         v, u = by[(name, regime, size, "validation")], by[(name, regime, size, "unseen")]
-        lines.append(f"{code(name)} & {code(regime)} & {size:.2f} & {ci(v['d_net'])} & {ci(u['d_net'])} & {ci(v['d_is'])} & {ci(u['d_is'])} & {u['exposure']:.3f} & {u['twap_exposure']:.3f}\\\\")
-    return table(r"The second-generation policies against \code{twap\_market} on the same episodes, greedy, $T = 2000$, in basis points with 95\% intervals. Validation is seeds 800--839, on which the checkpoint was chosen; unseen is seeds 1000--1079. Exposure is the mean signal of the makers' detector in the executor's direction.",
+        gap = lambda r, key: ci({"mean": r[key], "low": r[f"{key}_low"], "high": r[f"{key}_high"]})
+        lines.append(f"{code(name)} & {code(regime)} & {size:.2f} & {gap(v, 'gap_is')} & {gap(u, 'gap_is')} & {gap(v, 'gap_net')} & {gap(u, 'gap_net')} & {u['exposure']:.3f} & {u['twap_exposure']:.3f}\\\\")
+    return table(r"The second-generation policies against \code{twap\_market} on the same episodes, greedy, $T = 2000$, in basis points with 95\% intervals. Validation is seeds 800--879, on which the checkpoint was chosen; unseen is seeds 1000--1079, the estimate to quote. Exposure is the mean signal of the makers' detector in the executor's direction.",
                  "tab:rl_eval", "@{}lllllllrr@{}", lines)
 
 
@@ -237,22 +232,20 @@ def e8_rl_table(run: dict) -> str:
         _, strategy, size, _ = key.split("|")
         label = code(strategy.split("/")[-2]) if strategy.startswith("rl@") else code(strategy)
         e = run["executors"].get(key)
-        p = r["shapley"]
         deltas = f"{ci(e['d_is'])} & {ci(e['d_mechanical'])} & {ci(e['d_reaction'])}" if e else " & & "
         lines.append(f"{label} & {float(size):.2f} & {1 - r['aggressive_share']:.2f} & {r['mechanical'][0]:.2f} & {ci(r['reaction'])} & {r['reaction_share'][0]:.2f} & "
-                     f"{p['inventory']['mean']:+.2f} & {p['price']['mean']:+.2f} & {p['detection']['mean']:+.2f} & {p['predation']['mean']:+.2f} & {deltas}\\\\")
+                     f"{phi_cells(r)} & {deltas}\\\\")
     return table(r"The decomposition of the second-generation policies, low-cover market with ten times the capital, $T = 2000$, seeds 1020--1039, in basis points with 95\% intervals. $\Delta$ is against \code{twap\_market} on the same seeds.",
                  "tab:e8_rl", "@{}lrrrlrrrrrlll@{}", lines)
 
 
-def curve_table(low: dict, deep: dict) -> str:
+def curve_pair_table(low: dict, deep: dict) -> str:
     lines = [r" & \multicolumn{3}{c}{Low cover} & \multicolumn{3}{c}{Deep cover}\\\cmidrule(lr){2-4}\cmidrule(l){5-7}",
              r"Axis, value & Flow signal & A3 signal & Leakage & Flow signal & A3 signal & Leakage\\\midrule"]
     base = lambda c: c["medium"]["axes"]["participation"][0]["detectors"]
     a, b = base(low), base(deep)
     lines.append(f"Arm 0 & {a['flow_medium']['signal_arm0']:+.3f} & {a['learned']['signal_arm0']:+.3f} & & {b['flow_medium']['signal_arm0']:+.3f} & {b['learned']['signal_arm0']:+.3f} & \\\\\\midrule")
-    labels = {"participation": "Nominal $Q/V$", "timing_jitter": "Timing jitter", "size_jitter": "Size jitter", "passive_share": "Passive share"}
-    for axis, label in labels.items():
+    for axis, label in AXIS_LABELS.items():
         for x, y in zip(low["medium"]["axes"][axis], deep["medium"]["axes"][axis]):
             cell = lambda r: f"{r['detectors']['flow_medium']['signal'][0]:+.3f} & {r['detectors']['learned']['signal'][0]:+.3f} & {ci(r['leakage'])}"
             lines.append(f"{label} {x['value']:.2f} & {cell(x)} & {cell(y)}\\\\")
@@ -421,7 +414,7 @@ def main():
     tables.update(twap=twap_table(runs["deep"], runs["deep_cap"]), executors=executors_table(runs["deep"], runs["deep_cap"], tails_all["deep"], tails_all["deep_cap"]),
                   horizon=horizon_table(runs["horizons"], runs["horizons_cap"], tails_all["horizons"], tails_all["horizons_cap"]),
                   concavity=concavity_table(runs["deep"], runs["deep_cap"], runs["horizons"], runs["horizons_cap"]), runaways=runaways_table(tails_all),
-                  causes=causes_table(load("runaway_causes")["summary"]), routes=routes_table(runs["low"]), ppo=ppo_table(runs["low"]), curve=curve_table(curve, deep_curve))
+                  causes=causes_table(load("runaway_causes")["summary"]), routes=routes_table(runs["low"]), ppo=ppo_table(runs["low"]), curve=curve_pair_table(curve, deep_curve))
     pending = {"rl_eval": lambda: rl_eval_table(load("rl_eval")), "e8_rl": lambda: e8_rl_table(load("e8_rl"))}
     for name, make in pending.items():
         tables[name] = make() if (RESULTS / name / "summary.json").exists() else f"% {name}: no results yet; make_paper --refresh picks them up from outputs/decomposition/{name}/"

@@ -6,16 +6,17 @@
 ``train_rl`` and ``sweep_rl`` score greedy checkpoints on seeds 1000..1000+n-1 (n = 40 in the sweep) and pick the best
 checkpoint and hyperparameters from those scores, so the gap they report is selected on its own test set. This runs the
 same ``ExecutionEnv`` rollout, in the same stateful market, on those seeds and on the next ones. The first row reproduces
-the stored numbers; the second is the unbiased estimate. Output: outputs/stealth_execution/rl_heldout/summary.json.
+the stored numbers; the second is the unbiased estimate. Output: outputs/stealth_execution/rl_heldout/summary.json, or
+rl_heldout_single/ for a ``--policy`` of your own, so that the paper's summary is never written over.
 """
 
 import argparse
-from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 
 from order_book.execution import ExecutionEnv, make_strategy
 from order_book.provenance import write_manifest
+from order_book.runner import iter_jobs
 from order_book.scoring import paired_difference
 from papers.stealth_execution import OUT
 from scripts._common import write_json
@@ -44,20 +45,20 @@ def main():
     first_unseen = 1000 + args.selected_seeds
     groups = {"selected": range(1000, first_unseen), "unseen": range(first_unseen, first_unseen + args.unseen_seeds)}
     rows = []
-    with ProcessPoolExecutor(args.workers) as pool:
-        for policy, size in policies:
-            for label, seeds in groups.items():
-                twap = list(pool.map(_rollout, [("twap_market", size, s) for s in seeds]))
-                learned = list(pool.map(_rollout, [(f"rl@{policy}", size, s) for s in seeds]))
-                gap = paired_difference([r[0] for r in learned], [r[0] for r in twap])
-                rows.append({"policy": policy, "size": size, "seeds": label, "n": len(seeds),
-                             "twap": float(np.mean([r[0] for r in twap])), "ppo": float(np.mean([r[0] for r in learned])),
-                             "ppo_minus_twap": gap, "completion": float(np.mean([r[1] for r in learned]))})
-                print(f"Q/V={size:.2f} {label:<9} n={len(seeds):<3} TWAP {rows[-1]['twap']:+.2f}  PPO {rows[-1]['ppo']:+.2f}  "
-                      f"PPO-TWAP {gap['mean']:+.2f} [{gap['low']:+.2f},{gap['high']:+.2f}] p={gap['p_two_sided']:.3f}  "
-                      f"completion {rows[-1]['completion']:.3f}", flush=True)
-    write_manifest(OUT / "rl_heldout", vars(args))
-    write_json(rows, OUT / "rl_heldout" / "summary.json")
+    for policy, size in policies:
+        for label, seeds in groups.items():
+            twap = list(iter_jobs(_rollout, [("twap_market", size, s) for s in seeds], args.workers))
+            learned = list(iter_jobs(_rollout, [(f"rl@{policy}", size, s) for s in seeds], args.workers))
+            gap = paired_difference([r[0] for r in learned], [r[0] for r in twap])
+            rows.append({"policy": policy, "size": size, "seeds": label, "n": len(seeds),
+                         "twap": float(np.mean([r[0] for r in twap])), "ppo": float(np.mean([r[0] for r in learned])),
+                         "ppo_minus_twap": gap, "completion": float(np.mean([r[1] for r in learned]))})
+            print(f"Q/V={size:.2f} {label:<9} n={len(seeds):<3} TWAP {rows[-1]['twap']:+.2f}  PPO {rows[-1]['ppo']:+.2f}  "
+                  f"PPO-TWAP {gap['mean']:+.2f} [{gap['low']:+.2f},{gap['high']:+.2f}] p={gap['p_two_sided']:.3f}  "
+                  f"completion {rows[-1]['completion']:.3f}", flush=True)
+    out = OUT / ("rl_heldout" if args.policy is None else "rl_heldout_single")  # the paper's summary is the sweep's two policies
+    write_manifest(out, vars(args))
+    write_json(rows, out / "summary.json")
 
 
 if __name__ == "__main__":

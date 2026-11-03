@@ -44,7 +44,7 @@ from order_book.market import Market
 
 @dataclass(frozen=True)
 class GhostConfig:
-    orphan_ttl: int = 50          # steps an orphaned order survives in the copy; None keeps it until it trades
+    orphan_ttl: int | None = 50   # steps an orphaned order survives in the copy; None keeps it until it trades
 
 
 class GhostMarket(Market):

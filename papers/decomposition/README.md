@@ -75,7 +75,7 @@ zero dials is `twap_market`, `passive=1` alone is `twap_passive`).
 | Training the executor in the paired worlds | `order_book/training.py` | `train_rl` | `rl/<name>/` |
 | The policies against TWAP on unseen seeds | `order_book/training.py` | `rl_eval` | `rl_eval/` |
 | Their decomposition | `decomposition.py` | `decompose --out e8_rl` (job `e8_rl`) | `e8_rl/` |
-| The market with no executor, and how configs move it | | `market_probe` | `market_probe/` |
+| The market with no executor, and how configs move it (exploratory; nothing reads it) | | `market_probe` | `market_probe/` |
 
 ## Pilot results
 
@@ -105,13 +105,18 @@ exhaust the market's finite capital (speculator capacity first, then the noise p
 
 ## The learned executor
 
-`train_rl` trains PPO inside `PairedRun`, in the market with ten times the capital. Each fill is rewarded against the reference world's mid at that step, so
-natural drift drops out of the reward exactly and what is optimised is mechanical cost plus reaction, the two parts the decomposition measures;
-`--detection-penalty` charges time spent under the makers' flow detector and `--impact-penalty` weights the price's displacement. Episodes draw a seed below
-800 and a size from `--sizes` (and a market from `--regimes`), the checkpoint is chosen on seeds 800-839 against TWAP on the same episodes, and seeds from 1000
-up are never used: `rl_eval` scores the policies on 1000-1079 and `e8_rl` decomposes them on 1020-1039. `SWEEP` in the script lists the eight variants the
-cluster trains (plain, three detection penalties, the plain-shortfall ablation, an impact penalty, mixed markets, a second seed); each is a chain of resumable
-1-hour jobs (`submit_all.sh rl`, then `rl_results`). The first-generation policies of `papers/stealth_execution` remain as inputs for the low-cover grid.
+`train_rl` trains the executor inside `PairedRun`, in the market with ten times the capital. The reward is the shortfall minus a uniform schedule's drift
+along the reference world's mid: the reference never reacts to the executor, so that term is a control variate the policy cannot move, the objective stays
+exactly the shortfall, and the episode's noise falls from about 5.7 to about 2.2 bps. (`--reward net`, each fill against the reference mid at that step,
+removes the drift entirely but stops charging the drift an adaptive schedule pays: the first cluster run used it and its policies saved on the spread and
+lost it on timing; it stays as the ablation.) `--detection-penalty` charges time spent under the makers' flow detector and `--impact-penalty` weights the
+price's displacement. `--method` is PPO with GAE and a critic, or GRPO: no critic, groups of episodes sharing one seed, size and market and differing only in
+the policy's sampling, each scored against its group's mean, so drift cancels inside the group exactly. Episodes draw a seed below 800 and a size from
+`--sizes` (and a market from `--regimes`); the checkpoint is chosen greedily on seeds 800-879 against TWAP on the same episodes; seeds from 1000 up are never
+used: `rl_eval` scores the policies on 1000-1079 and `e8_rl` decomposes them on 1020-1039. `SWEEP` in the script lists the ten variants the cluster trains
+(PPO and GRPO plain, with a detection penalty, across both markets and with a second seed; the net-of-drift ablation; GRPO with groups of 8); each is a chain
+of resumable 1-hour jobs, and `submit_all.sh rl` queues `rl_eval` and `e8_rl` behind the chain. The first-generation policies of `papers/stealth_execution`
+remain as inputs for the low-cover grid.
 
 **The paper is `paper/paper.pdf`.** Build it with `python -m papers.decomposition.scripts.make_paper --refresh` (or without `--refresh`, from `results/full/`), then `latexmk -pdf paper.tex` in `paper/`. Its findings replace the pilot bullets above where they differ: on mean impact, reaction lowers the exponent at T=8000 once capital is not binding. `paper/notes.tex` is older working notes whose results prose is still the pilot's.
 

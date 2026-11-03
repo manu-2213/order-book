@@ -59,6 +59,7 @@ class PPOTrainer:
         self.net = (net or new_policy(device, self.cfg.seed)).to(device)
         self.opt = torch.optim.Adam(self.net.parameters(), lr=self.cfg.lr)
         self.rng = np.random.default_rng(self.cfg.seed)
+        self.centre_advantages = True  # GRPO turns this off: its advantages are centred per group already
         self.history: list[dict] = []
 
     # ----- data collection ------------------------------------------------- #
@@ -66,7 +67,7 @@ class PPOTrainer:
     def collect(self) -> tuple[dict, dict]:
         """Roll out a batch of episodes; returns stacked tensors and episode statistics."""
         strategy = PolicyStrategy(self.net, deterministic=False, device=self.device)
-        obs, acts, logp, adv, ret, vals = [], [], [], [], [], []
+        obs, acts, logp, adv, ret = [], [], [], [], []
         shortfalls, completions, rets = [], [], []
         for _ in range(self.cfg.episodes_per_update):
             seed = int(self.rng.choice(self.cfg.train_seeds))
@@ -79,7 +80,6 @@ class PPOTrainer:
             obs.extend(t.obs for t in transitions)
             acts.extend(t.action for t in transitions)
             logp.extend(t.log_prob for t in transitions)
-            vals.extend(values)
             adv.extend(a.tolist())
             ret.extend(r.tolist())
             if info.shortfall_bps is not None:
@@ -92,7 +92,6 @@ class PPOTrainer:
             "log_probs": torch.as_tensor(logp, dtype=torch.float32, device=self.device),
             "advantages": torch.as_tensor(adv, dtype=torch.float32, device=self.device),
             "returns": torch.as_tensor(ret, dtype=torch.float32, device=self.device),
-            "values": torch.as_tensor(vals, dtype=torch.float32, device=self.device),
         }
         stats = {
             "shortfall": float(np.mean(shortfalls)) if shortfalls else float("nan"),
@@ -107,7 +106,7 @@ class PPOTrainer:
     def update(self, batch: dict) -> dict:
         n = batch["obs"].shape[0]
         adv = batch["advantages"]
-        adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+        adv = ((adv - adv.mean()) if self.centre_advantages else adv) / (adv.std() + 1e-8)
         idx = np.arange(n)
         p_loss = v_loss = ent = kl = 0.0
         passes = 0

@@ -11,12 +11,12 @@ from order_book.counterfactual import (
     ALL_CHANNELS, ARMS, CHARTISTS_BLIND, FULL, FUNDAMENTALISTS_BLIND, GHOST, MAKERS_BLIND, PREDATOR_CONTROL, PairedResult,
 )
 from papers.decomposition.decomposition import (
-    CAPITAL_REGIMES, DecompositionConfig, ProtocolConfig, abides_specs, bucci_specs, compare_executors, format_concavity,
+    DecompositionConfig, ProtocolConfig, abides_specs, bucci_specs, compare_executors, format_concavity,
     format_controls, format_decomposition, format_executors, format_protocol, run_paired_specs, shapley, shi_cartlidge_specs, summarise_abides,
     summarise_bucci, summarise_cell, summarise_concavity, summarise_decomposition, summarise_protocol,
     summarise_shi_cartlidge,
 )
-from order_book.experiments import RegimeSpec
+from order_book.experiments import CAPITAL_REGIMES, RegimeSpec
 from order_book.presets import regime
 from order_book.scoring import bootstrap_ratio, crn_diagnostics, paired_difference
 

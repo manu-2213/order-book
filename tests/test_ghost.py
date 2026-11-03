@@ -7,7 +7,7 @@ from order_book.book import OrderBook
 from order_book.execution import ExecutionTask, make_strategy
 from order_book.ghost import GhostConfig, GhostMarket
 from order_book.market import Market
-from tests.helpers import assert_accounted, assert_book_invariants
+from tests.helpers import assert_accounted, assert_book_invariants, assert_reservations_consistent
 
 EXECUTOR = 9
 
@@ -179,13 +179,7 @@ def test_book_invariants_hold_in_the_copy_with_a_trading_executor():
     for _ in range(220):
         run.step()
         assert_book_invariants(run.market.book)
-        reserved = {cid: [0, 0] for cid in run.market.accounts}
-        for side, table in (("bid", run.market.book.bid_table), ("ask", run.market.book.ask_table)):
-            for queue in table.values():
-                for order in queue:
-                    reserved[order["client_id"]][side == "ask"] += order["price"] * order["quantity"] if side == "bid" else order["quantity"]
-        for cid, account in run.market.accounts.items():
-            assert (account.reserved_cash, account.reserved_shares) == tuple(reserved[cid])
+        assert_reservations_consistent(run.market, allow_short=True)
         assert (sum(a.cash for a in run.market.accounts.values()),
                 sum(a.shares for a in run.market.accounts.values())) == initial
     assert executor.done and executor.result.executed == executor.quantity

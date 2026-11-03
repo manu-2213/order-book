@@ -38,10 +38,6 @@ class PolicyNet(nn.Module):
         h = self.trunk(obs)
         return self.actor(h), self.critic(h).squeeze(-1)
 
-    def distribution(self, obs: torch.Tensor) -> torch.distributions.Categorical:
-        logits, _ = self.forward(obs)
-        return torch.distributions.Categorical(logits=logits)
-
     # ----- persistence ----------------------------------------------------- #
 
     def save(self, path) -> None:
@@ -62,18 +58,16 @@ class PolicyStrategy(Strategy):
 
     name = "rl"
 
-    def __init__(self, net: PolicyNet, deterministic: bool = True, device: str = "cpu"):
+    def __init__(self, net: PolicyNet, deterministic: bool = True, device: str = "cpu", sample: int = 0):
         self.net = net.to(device)
         self.deterministic = deterministic
         self.device = device
+        self.sample = sample  # offsets the sampling stream: different samples of one seed give different episodes
         self.recorder: list[Transition] | None = None  # when set, decisions are logged for PPO
 
     @classmethod
     def from_file(cls, path, deterministic: bool = True, device: str = "cpu") -> "PolicyStrategy":
         return cls(PolicyNet.load(path, map_location=device), deterministic, device)
-
-    def reset(self, s: ExecState, rng) -> None:
-        pass
 
     def decide(self, s: ExecState, rng) -> Decision:
         obs = features(s)[: self.net.n_features]  # a net trained before a feature was appended still sees what it knows
@@ -81,9 +75,9 @@ class PolicyStrategy(Strategy):
         with torch.no_grad():
             logits, value = self.net(t)
         dist = torch.distributions.Categorical(logits=logits)
-        if self.recorder is not None or not self.deterministic:
+        if not self.deterministic:
             # a seeded torch generator keeps sampling reproducible from the executor's own stream
-            gen = torch.Generator(device=self.device).manual_seed(int(rng.integers(1 << 31)))
+            gen = torch.Generator(device=self.device).manual_seed(int(rng.integers(1 << 31)) + self.sample)
             action = torch.multinomial(dist.probs, 1, generator=gen).item()
         else:
             action = int(torch.argmax(logits, dim=-1).item())

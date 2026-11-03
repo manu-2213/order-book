@@ -115,10 +115,6 @@ class Simulator:
 
     # ----- stepping -------------------------------------------------------- #
 
-    @property
-    def step_count(self) -> int:
-        return self.market.step
-
     def schedule(self):
         """The order the background agents act in this step."""
         return keyed(self.rng, self.market.step, SCHEDULE).permutation(len(self.agents))

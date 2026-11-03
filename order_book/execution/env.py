@@ -21,11 +21,9 @@ import numpy as np
 from order_book.config import SimConfig
 from order_book.execution.features import Transition
 from order_book.execution.policy import PolicyStrategy
-from order_book.execution.task import ExecutionTask, ExecutorAgent, expected_volume_from_tape
+from order_book.execution.task import EXECUTOR_ENDOWMENT, ExecutionTask, ExecutorAgent, expected_volume_from_tape
 from order_book.presets import adversary, regime
 from order_book.simulator import Simulator
-
-EXECUTOR_ENDOWMENT = 50_000          # shares; cash = shares x mid, so any task size is funded
 
 
 def phase3_config(institutions: int = 1, liquidity: float = 1.0, threshold: str = "medium",
@@ -102,7 +100,6 @@ class ExecutionEnv:
         if transitions:
             incomplete_frac = (r.incomplete / quantity) if r.incomplete else 0.0
             transitions[-1].reward -= self.incomplete_penalty * incomplete_frac
-            transitions[-1].done = True
         ret = sum(t.reward for t in transitions)
         info = EpisodeInfo(
             shortfall_bps=r.shortfall_bps, leakage_proxy=r.aggressive_executed / r.executed if r.executed else 0.0,

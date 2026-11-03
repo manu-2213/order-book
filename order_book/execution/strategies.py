@@ -107,6 +107,8 @@ class DialTwap(Strategy):
 
     def __init__(self, size: float = 0.0, timing: float = 0.0, passive: float = 0.0):
         self.size, self.timing, self.passive = size, timing, passive
+        if not 0 <= timing < 1:
+            raise ValueError("timing is the probability of skipping a decision and must be below 1")
         self.name = f"twap@size={size:g},timing={timing:g},passive={passive:g}"
 
     def reset(self, s: ExecState, rng) -> None:
@@ -127,13 +129,10 @@ class DialTwap(Strategy):
 # ----- model-based schedules -------------------------------------------------------------- #
 
 class _ScheduleFollower(Strategy):
-    """Follow a target trajectory ``scheduled_executed(t)`` with the passive-with-catch-up tactic."""
-
-    def scheduled_executed(self, s: ExecState) -> float:
-        raise NotImplementedError
+    """Follow a target trajectory ``scheduled_executed_at(s, elapsed)`` with the passive-with-catch-up tactic."""
 
     def decide(self, s: ExecState, rng) -> Decision:
-        behind = max(0, math.floor(self.scheduled_executed(s)) - s.executed)
+        behind = max(0, math.floor(self.scheduled_executed_at(s, s.elapsed)) - s.executed)
         next_target = self.scheduled_executed_at(s, s.elapsed + s.decision_interval)
         slice_qty = max(0, math.ceil(next_target) - s.executed - behind)
         return Decision(cancel=True, market_qty=behind, limit_qty=slice_qty)
@@ -162,9 +161,6 @@ class AlmgrenChriss(_ScheduleFollower):
         if k * T < 1e-6:
             return s.quantity * t / T
         return s.quantity * (1 - math.sinh(k * (T - t)) / math.sinh(k * T))
-
-    def scheduled_executed(self, s: ExecState) -> float:
-        return self.scheduled_executed_at(s, s.elapsed)
 
 
 class ObizhaevaWang(Strategy):
@@ -290,31 +286,13 @@ class Mimic(Strategy):
 
 # ----- registry ------------------------------------------------------------------------- #
 
-def classic_strategies(calibration: Calibration | None = None, pov_rate: float = 0.10) -> dict[str, Strategy]:
-    """The classical schedules of the plan, by name."""
-    return {
-        "immediate": Immediate(), "twap_market": TwapMarket(), "twap_passive": TwapPassive(),
-        "twap_random": TwapRandom(), "pov": Pov(pov_rate),
-    }
-
-
-def model_strategies(calibration: Calibration | None = None,
-                     risk_aversions=(1e-7, 1e-6, 1e-5)) -> dict[str, Strategy]:
-    """Almgren-Chriss at three risk aversions (kappa T of roughly 0.6, 2 and 6 with the default
-    calibration), Obizhaeva-Wang and the limit-and-market policy."""
-    cal = calibration or Calibration()
-    out: dict[str, Strategy] = {AlmgrenChriss(l, cal).name: AlmgrenChriss(l, cal) for l in risk_aversions}
-    out["obizhaeva_wang"] = ObizhaevaWang(cal)
-    out["limit_market"] = LimitMarket(calibration=cal)
-    return out
-
-
-def stealth_strategies() -> dict[str, Strategy]:
-    return {"footprint": Footprint(), "mimic": Mimic()}
-
-
 def all_baselines(calibration: Calibration | None = None) -> dict[str, Strategy]:
-    return {**classic_strategies(calibration), **model_strategies(calibration), **stealth_strategies()}
+    """The twelve baselines by name: the classical schedules, Almgren-Chriss at three risk aversions (kappa T of roughly
+    0.6, 2 and 6 with the default calibration), Obizhaeva-Wang, the limit-and-market policy and the two stealth heuristics."""
+    cal = calibration or Calibration()
+    return {"immediate": Immediate(), "twap_market": TwapMarket(), "twap_passive": TwapPassive(), "twap_random": TwapRandom(), "pov": Pov(0.10),
+            **{AlmgrenChriss(l, cal).name: AlmgrenChriss(l, cal) for l in (1e-7, 1e-6, 1e-5)},
+            "obizhaeva_wang": ObizhaevaWang(cal), "limit_market": LimitMarket(calibration=cal), "footprint": Footprint(), "mimic": Mimic()}
 
 
 def make_strategy(name: str, calibration: Calibration | None = None) -> Strategy:

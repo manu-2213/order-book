@@ -9,7 +9,7 @@ while evaluating the trained policy as an ordinary ``Strategy``
 The action is a discrete pair ``(size multiplier, placement)``: how large the
 next child is relative to the remaining-over-decisions-left pace, and whether
 it is a market order, a passive limit at own best, or a passive limit one tick
-behind. Action index ``0`` is always "hold".
+behind. A multiplier of zero is "hold", whatever the placement.
 """
 
 import math
@@ -61,7 +61,7 @@ def features(s: ExecState) -> np.ndarray:
 def decision(action: int, s: ExecState) -> Decision:
     """Turn a discrete action index into a concrete ``Decision`` for the current state."""
     mult, place = ACTIONS[int(action)]
-    base = s.remaining / s.decisions_left if s.decisions_left else s.remaining
+    base = s.remaining / s.decisions_left  # at least 1 by construction
     qty = max(0, round(mult * base))
     if qty <= 0:
         return Decision()
@@ -80,4 +80,3 @@ class Transition:
     log_prob: float
     value: float
     reward: float = 0.0
-    done: bool = False

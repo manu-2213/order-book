@@ -222,7 +222,6 @@ def _run_worker(job: SweepJob, idx: int, total: int, args, state: dict, lock: th
             log_file.write(line)
             log_file.flush()
             with lock:
-                state["steps_done"] += 1 if "] IS " in line else 0
                 sys.stdout.write(line)
                 sys.stdout.flush()
         proc.wait()

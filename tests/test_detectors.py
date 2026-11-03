@@ -56,7 +56,7 @@ def test_cusum_alarms_restarts_and_decays():
     det = CusumDetector(k=0.1, h=1.5, block=20, hold=10)
     sig = feed(det, ["bid"] * 20 * 4)                 # four one-sided blocks: x = 1 each
     assert sig[-1] == 1.0                             # alarm raised and held
-    assert det.s_plus == 0.0 and det.s_minus == 0.0 or det.blocks_since_alarm >= 0
+    assert det.s_plus == 0.0 and det.s_minus == 0.0  # the statistics restart at the alarm
     sig = []
     for _ in range(20 * 12):                           # quiet: alarm decays over ``hold`` blocks
         sig.append(det.update(FakePublic([])))

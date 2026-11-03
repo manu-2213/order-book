@@ -22,7 +22,9 @@ def test_same_config_and_seed_reproduce_the_event_log_exactly():
     b.run(600)
     assert event_log(a) == event_log(b)
     assert len(a.market.tape) > 100
-    assert event_log(Simulator(seed=12).__class__(seed=12)) != event_log(a)  # a different seed differs
+    c = Simulator(seed=12)
+    c.run(600)
+    assert event_log(c) != event_log(a)  # a different seed differs
 
 
 def test_snapshot_restore_and_reseed_replay_exactly():
@@ -144,7 +146,7 @@ def test_agents_use_only_public_data_and_their_own_account(monkeypatch):
                 guard.suspended -= 1
         return wrapper
 
-    for name in ("limit", "ioc", "market", "cancel", "cancel_all", "wealth", "end_step"):
+    for name in ("limit", "market", "cancel", "cancel_all", "wealth", "end_step"):
         monkeypatch.setattr(market_module.Market, name, suspended(getattr(market_module.Market, name)))
 
     def own_orders_only(method, pick_cid):
@@ -191,7 +193,6 @@ def test_agents_use_only_public_data_and_their_own_account(monkeypatch):
     sim.run(600)
     assert sim.book.trade_id > 100  # the guard really ran through busy steps
     guard.actor = None
-    assert len(sim.metaorders.records) >= 0
     assert sim.externals[0].done and sim.externals[0].result.executed == sim.externals[0].quantity
 
     # The guard itself catches a leak: a rogue agent peeking at someone else's account.

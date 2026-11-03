@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from order_book.config import BookConfig, SimConfig
+from order_book.impact import mid_path
 from order_book.simulator import Simulator
 from scripts import OUTPUTS
 
@@ -16,12 +17,7 @@ from scripts import OUTPUTS
 def _mid_path(args):
     seed, steps, num_levels = args
     config = replace(SimConfig(), book=replace(BookConfig(), num_levels=num_levels))
-    sim = Simulator(seed, config, analysis=False)
-    path = np.empty(steps)
-    for t in range(steps):
-        sim.step()
-        path[t] = sim.market.public.mid
-    return path
+    return mid_path(Simulator(seed, config, analysis=False), steps)
 
 
 def simulate_paths(runs=100, steps=10_000, num_levels=20, seed=0, workers=None):

@@ -45,8 +45,9 @@ def assert_book_invariants(book: OrderBook) -> None:
     assert_accounted(book.last_order_report)
 
 
-def assert_reservations_consistent(market: Market) -> None:
-    """Running reservation totals equal what actually rests; nobody is short of cash or shares."""
+def assert_reservations_consistent(market: Market, allow_short: bool = False) -> None:
+    """Running reservation totals equal what actually rests; nobody is short of cash or shares (unless ``allow_short``:
+    the ghost's shadow accounts are not budget-checked)."""
     reserved = {cid: [0, 0] for cid in market.accounts}
     for side, table in (("bid", market.book.bid_table), ("ask", market.book.ask_table)):
         for queue in table.values():
@@ -54,5 +55,6 @@ def assert_reservations_consistent(market: Market) -> None:
                 reserved[o["client_id"]][side == "ask"] += o["price"] * o["quantity"] if side == "bid" else o["quantity"]
     for cid, account in market.accounts.items():
         assert (account.reserved_cash, account.reserved_shares) == tuple(reserved[cid]), cid
-        assert account.free_cash >= 0
-        assert account.free_shares >= 0
+        if not allow_short:
+            assert account.free_cash >= 0
+            assert account.free_shares >= 0

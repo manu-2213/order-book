@@ -3,16 +3,14 @@
     python -m scripts.calibrate                      # 10 training seeds, full horizon (~3 min)
     python -m scripts.calibrate --quick              # 2 seeds, short horizon (seconds)
 
-Writes outputs/calibration.json, which scripts/e2_detectability.py and scripts/e3_leakage.py load
-when present (otherwise the defaults in order_book.execution.strategies.Calibration are used).
+Writes outputs/calibration.json, which the experiments load when present (otherwise the defaults in
+order_book.execution.strategies.Calibration are used).
 """
 
 import argparse
 
 from order_book.execution.calibration import calibrate, save
-from scripts import OUTPUTS
-
-CALIBRATION_PATH = OUTPUTS / "calibration.json"
+from scripts._common import CALIBRATION_PATH
 
 
 def main():

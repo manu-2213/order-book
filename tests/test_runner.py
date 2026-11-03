@@ -33,9 +33,11 @@ def test_manifest_records_the_run_and_a_fresh_run_replaces_it(tmp_path):
     entries = json.loads((tmp_path / "manifest.json").read_text())
     assert len(entries) == 1 and entries[0]["simulator_version"] == SIMULATOR_VERSION
     assert entries[0]["config"] == {"seeds": [1, 2]} and entries[0]["numpy"] and "argv" in entries[0]
-    write_manifest(tmp_path, {"seeds": [3]}, resume=True)
+    write_manifest(tmp_path, {"seeds": (1, 2)}, resume=True)  # the same settings, however they were spelt
     entries = json.loads((tmp_path / "manifest.json").read_text())
     assert len(entries) == 2 and entries[1]["resumed"] is True
+    with pytest.raises(RuntimeError, match="other settings"):
+        write_manifest(tmp_path, {"seeds": [3]}, resume=True)  # resuming would label the old runs as this setting's
     write_manifest(tmp_path, {"seeds": [4]})
     assert len(json.loads((tmp_path / "manifest.json").read_text())) == 1
 

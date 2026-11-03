@@ -83,13 +83,15 @@ Estimates come from the pilot's timings on the Mac, where the slowest seed was 1
 | `replications` | 20 | 1,840 | 2 | 4 | under 1 min |
 | `e8_capital_deep`, `e8_capital_low` | 20 each | 24,000 each | 15-20 | 4 | 5 min |
 | `e8_capital_horizons` | 20 | 18,000 | about 25 | 8 | 3 min |
-| `train_rl` | 8 variants | 2,000 PPO iterations each | about 60 per hour per task | 16 | 4 chained hours, `CHAIN=4` |
-| `rl_eval` | 1 | 8 policies x up to 6 cells x 120 seeds x 2 | about 20 | 16 | a few min |
-| `e8_rl` | 20 | 12,000 | about 10 | 8 | 2 min |
+| `train_rl` | 10 variants | 1,000 PPO or GRPO iterations each | about 370 per hour per task (9.6 s an iteration) | 16 | 3 chained hours; `CHAIN=4` leaves a margin |
+| `rl_eval` | 1 | 10 policies x up to 6 cells x 120 seeds, plus TWAP once per episode | about 25 | 16 | 20 min |
+| `e8_rl` | 20 | 14,400 | about 10 | 8 | 3 min |
 
-`train_rl` is the one job that outlives an hour. Each task checkpoints before the walltime and the next link of the chain resumes it
-(`CHAIN=4 bash hpc/submit.sh decomposition train_rl`); a link that finds its run finished exits at once, so an extra link costs nothing. Submit
-`rl_results` only after every training task has printed `done` in its log: `grep -l "] done" papers/decomposition/slurm/logs/train_rl.o*`.
+`train_rl` is the one job that outlives an hour. Each task checkpoints before the walltime and the next link of the chain resumes it;
+a link that finds its run finished exits at once, so an extra link costs nothing. `submit_all.sh rl` chains 4 links and queues `rl_eval` and
+`e8_rl` behind the last one (`AFTER=<job id>` in `hpc/submit.sh`), so one command gives the policies, their scores and their decomposition.
+If a task's log does not end in `done` after the chain, `CHAIN=2 bash hpc/submit.sh decomposition train_rl` adds hours and `submit_all.sh rl_results`
+redoes the results from the finished policies. Delete `outputs/decomposition/e8_rl` on the cluster before any rerun with a different sweep: shards resume.
 
 `e2`, `e3`, `e7`, `e7b` and `rl_heldout` in `papers/stealth_execution/slurm/` are not split: each is a single 1-hour job on 16 cores. They are not resumable, so if one hits the hour, raise its `-t` or cores.
 

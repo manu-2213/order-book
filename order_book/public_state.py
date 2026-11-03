@@ -29,7 +29,7 @@ class PublicState:
         self.last: int | None = None
         self.best_bid = self.best_ask = None
         self.spread = 0
-        self.ma_fast = self.ma_slow = float(mid)
+        self.ma_slow = float(mid)
         self.var_fast = self.var_slow = 1.0  # ticks^2 per step
         self.volume_fast = self.volume_slow = 0.0
         self.lookbacks = cfg.lookbacks
@@ -37,10 +37,9 @@ class PublicState:
         self.momentum = [0.0] * len(cfg.lookbacks)
         self.imbalance = 0.0
         self.attention = 1.0
-        self.warmed_up = False  # slow EWMAs have seen a full span
+        self.warmed_up = False  # past half the slow span (n x alpha_slow > 1); before it the ratios are meaningless
         self.step_volume = 0
         self.step_trades: list[tuple] = []
-        self.step_count = 0
         self._a_fast, self._a_slow = 2 / (cfg.fast + 1), 2 / (cfg.slow + 1)
         self._alphas = [(2 / (f + 1), 2 / (s + 1)) for f, s in cfg.lookbacks]
         self._emas = [[float(mid), float(mid)] for _ in cfg.lookbacks]
@@ -68,7 +67,6 @@ class PublicState:
             mid = float(last) if last is not None else self.mid
         change, self.mid, self.last = mid - self.mid, mid, last
         a, b = self._a_fast, self._a_slow
-        self.ma_fast += a * (mid - self.ma_fast)
         self.ma_slow += b * (mid - self.ma_slow)
         self.var_fast += a * (change * change - self.var_fast)
         self.var_slow += b * (change * change - self.var_slow)
@@ -92,7 +90,6 @@ class PublicState:
         total = self.buy_flow_all + self.sell_flow_all
         self.imbalance_all = (self.buy_flow_all - self.sell_flow_all) / total if total else 0.0
         self._n += 1
-        self.step_count = self._n
         if self._n * self._a_slow > 1:  # past the slow warm-up; before it the ratios are meaningless
             self.warmed_up = True
             relative_vol = math.sqrt(self.var_fast / self.var_slow) if self.var_slow > 0 else 1.0
